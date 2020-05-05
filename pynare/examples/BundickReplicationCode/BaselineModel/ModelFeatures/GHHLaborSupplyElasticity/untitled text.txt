@@ -1,0 +1,5 @@
+Note:  To simulate ACEL model, the timing is wrong for both files.  
+
+You could simulate the technology shocks file, then simulate monetary policy shocks file, then add the two 
+together since it is a linear model.  
+

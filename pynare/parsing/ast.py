@@ -115,12 +115,11 @@ class Var(AST):
 		self.value = self.token.value
 
 
-class PeriodVar(AST):
+class OffsetVar(AST):
 
-	def __init__(self, token, period):
-		self.token = token
-		self.value = self.token.value
-		self.period = period
+	def __init__(self, var, offset):
+		self.var = var
+		self.offset = offset
 
 
 class VarAssignment(AST):
@@ -151,12 +150,14 @@ class TagPair(AST):
 		self.value = value
 
 
+
+
 class ModelExpression(AST):
 
 	def __init__(self, left, right, tag=None):
 		self.left = left
 		self.right = right
-		self._tag = tag
+		self.tag = tag
 
 	@property
 	def tag(self):

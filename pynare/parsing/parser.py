@@ -10,6 +10,9 @@ different parts of a .mod file, and also exemplifying the inheritance and
 polymorphism of Python classes
 """
 
+import pynare.parsing.algebra as alg
+
+
 import pynare.parsing.ast as ast
 import pynare.parsing.base as base
 
@@ -31,6 +34,8 @@ class Parser(fnc.Parser):
 	def __init__(self, lexer):
 		super().__init__(lexer)
 
+	# PARSING LISTS OF PARAMETERS - NOT EXCLUSIVE TO MODEL BLOCK, BUT IT'S 
+	#	THE FIRST TIME IT CAME UP
 	def parameter_list(self):
 		"""
 		parameter_list : LPARE ID (COMMA ID)* RPARE
@@ -55,6 +60,8 @@ class Parser(fnc.Parser):
 		else:
 			return list()
 
+
+	# MODEL DECLARATION
 	def model_block(self):
 		"""
 		model_block : MODEL SEMI model END SEMI
@@ -122,6 +129,8 @@ class Parser(fnc.Parser):
 
 		return ast.ModelExpression(left, right)
 
+
+	# AUXILLIARY FUNCTIONALITY IN MODEL STATEMENTS: LOCAL VARIABLES, TAGS
 	def local_declaration(self):
 		"""
 		local_declaration : POUND ID EQUALS mexpr
@@ -163,15 +172,13 @@ class Parser(fnc.Parser):
 		self.eat(base.STRING)
 		return ast.TagPair(key, value)
 
+
 	# MODEL EXPRESSION METHODS
 	def matom(self):
 		token = self.current_token
 
 		if token.type == base.ID:
-			var = self.variable()
-			if self.peek_type() == base.LPARE:
-				pvar = self.period_variable(var)
-				# return pvar
+			var = self.maybe_offset_variable()
 			return var
 		elif token.type == base.NUMBER:
 			self.eat(base.NUMBER)
@@ -225,23 +232,35 @@ class Parser(fnc.Parser):
 
 
 	# OUT-OF- and IN-PERIOD VARIABLES
-	def period_variable(self, var):
+	def period_offset(self):
+		"""
+		period_offset : LPARE (PLUS | MINUS) NUMBER RPARE
+		"""
 		self.eat(base.LPARE)
 		if self.current_token.type in (base.PLUS, base.MINUS):
 			direction = self.current_token
 			self.eat(direction.type)
 		else:
 			self.error()
-
 		periods = self.current_token
-		period_str = direction.value + str(periods.value)
 		self.eat(base.NUMBER)
 		self.eat(base.RPARE)
 
-		# int() can't read the periods.value b/c it is a string float,
-		# 	so first we cast to float
-		offset = int(float(period_str))
-		return ast.PeriodVar(var.token, offset)
+		# int() can't read the periods.value b/c it is a string float, so 
+		# 	we first cast to float
+		period_str = direction.value + str(periods.value)
+		return int(float(period_str))
+
+	def maybe_offset_variable(self):
+		"""
+		maybe_offset_variable : ID
+							  | ID period_offset
+		returns ast.OffsetVar if offset given, ast.Var node otherwise
+		"""
+		var = self.variable()
+		if self.peek_type() == base.LPARE:
+			return ast.OffsetVar(var=var, offset=self.period_offset())
+		return var
 
 	def variable(self):
 		node = ast.Var(self.current_token)

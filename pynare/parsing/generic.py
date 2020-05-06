@@ -40,8 +40,8 @@ class ABCParser(object):
 class ABCVisitor(object):
 	""" Abstract Base Class for AST node visitors """
 
-	def __init__(self):
-		pass
+	def __init__(self, tree):
+		self.tree = tree
 
 	def visit(self, node):
 		method = 'visit_' + type(node).__name__

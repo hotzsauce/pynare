@@ -62,27 +62,37 @@ RESERVED_KEYWORDS = {
 class Parser(alg.Parser):
 	""" 
 	The FunctionParser adds a call() method inbetween the exponent() and atom() 
-	methods of the super-class AlgebraParser
+	methods of the super-class pynare.parsing.algebra.Parser
 	"""
 
 	def __init__(self, lexer):
 		super().__init__(lexer)
 
 	def call(self):
-		node = self.atom()
-
+		"""
+		call : atom
+			 | FUNCTION LPARE expr RPARE
+		"""
+		# we don't call the lower-level method first, like we do in other 
+		#	expression methods, because the atom() method doesn't recognize
+		#	tokens of type FUNCTION. Instead we do the try..except below:
 		while self.current_token.type == FUNCTION:
 			token = self.current_token
 			self.eat(FUNCTION)
 			self.eat(base.LPARE)
-
 			node = ast.Function(token=token,
 								expr=self.expr())
 			self.eat(base.RPARE)
 
-		return node
+		try:
+			return node
+		except UnboundLocalError:
+			return self.atom()
 
 	def exponent(self):
+		"""
+		exponent : call (POWER exponent)*
+		"""
 		node = self.call()
 
 		while self.current_token.type == base.POWER:
@@ -152,27 +162,3 @@ class Interpreter(alg.Interpreter):
 
 		if f == ERF:
 			return erf(self.visit(node.expr))
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

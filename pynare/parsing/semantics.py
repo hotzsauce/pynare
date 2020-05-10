@@ -94,7 +94,6 @@ class ScopedSymbolTable(object):
 		return '\n'.join(lines)
 
 
-
 class SemanticAnalyzer(ABCVisitor):
 
 	def __init__(self):
@@ -105,27 +104,56 @@ class SemanticAnalyzer(ABCVisitor):
 
 	# ALGEBRA & FUNCTIONS
 	def visit_BinaryOp(self, node):
+		"""
+		checks for semantic errors in left and right exprs
+		"""
 		self.visit(node.left)
 		self.visit(node.right)
 
 	def visit_UnaryOp(self, node):
+		"""
+		checks for semantic errors in expr
+		"""
 		self.visit(node.expr)
 
 	def visit_Num(self, node):
+		"""
+		nothing to see here
+		"""
 		pass
 
 	def visit_Var(self, node):
+		"""
+		checks that the variable has been defined. This check is identical to the 
+		one in visit_VarDeclaration, but the description in the NameError differs
+		"""
 		var_name = node.value 
 		var_symbol = self.scope.lookup(var_name)
 		if var_symbol is None:
 			raise NameError('name {} is not defined.'.format(repr(var_name)))
 
 	def visit_Function(self, node):
-		pass
+		"""
+		check the argument of the function
+		"""
+		self.visit(node.expr)
 
+
+	# PARAMETERS
+	def visit_Param(self, node):
+		"""
+		nothing to do just yet, will need to check that these are accepted
+		parameters somehow, though
+		"""
+		pass
 
 	# BLOCKS BEFORE MODEL
 	def visit_VarDeclaration(self, node):
+		"""
+		retrieve the BuiltinSymbol based on 'vtype' attr of node, create a 
+		VarSymbol based on that type and the name of the variable, and save
+		to the Global Scope
+		"""
 		# getting built-in type
 		vtype = node.vtype
 		stype = self.scope.lookup(vtype)
@@ -134,8 +162,6 @@ class SemanticAnalyzer(ABCVisitor):
 		var_name = node.var_node.value
 		var_symbol = VarSymbol(var_name, stype)
 
-		print()
-
 		# if this variable name has already been used, throw an error
 		if self.scope.lookup(var_name) is not None:
 			msg = 'name {} has already been declared.'
@@ -143,6 +169,11 @@ class SemanticAnalyzer(ABCVisitor):
 		self.scope.insert(var_symbol)
 
 	def visit_VarAssignment(self, node):
+		"""
+		checks variable has been declared & looks for semantic errors in its assigned 
+		value (node.right). This check is identical to the one in visit_Var, but the 
+		description in the NameError differs
+		"""
 		var_name = node.left.value
 		var_symbol = self.scope.lookup(var_name)
 		if var_symbol is None:
@@ -151,20 +182,30 @@ class SemanticAnalyzer(ABCVisitor):
 		self.visit(node.right)
 
 
-	# MODEL
+	# MODEL BLOCK
+	def visit_ModelBlock(self, node):
+		self.visit(node.parameters)
+		self.visit(node.model)
+
+	def visit_Model(self, node):
+		node.describe()
+
 
 
 	# MODFILE
 	def visit_ModFile(self, node):
-		for vd in node.declaration:
-			self.visit(vd)
+		"""
+		checks the variable declarations node (a Compound), the variable
+		assignments node (another Compound), and the model block (a 
+		ModelBlock node)
+		"""
+		self.visit(node.declaration)
 		self.visit(node.assignment)
-		# self.visit(node.model)
+		self.visit(node.model_block)
 
 	def visit_Compound(self, node):
 		for child in node.children:
 			self.visit(child)
-
 
 
 	def __repr__(self):
@@ -177,13 +218,3 @@ class SemanticAnalyzer(ABCVisitor):
 					class_name=self.__class__.__name__
 		)
 		return ''.join([header, self.scope.__str__()])
-
-
-
-
-
-
-
-
-
-

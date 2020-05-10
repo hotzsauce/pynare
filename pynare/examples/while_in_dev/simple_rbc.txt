@@ -16,9 +16,15 @@ delt = 0.01;
 % single comment 
 
 model(linear, mopt);
+# local_delt = delt*1.1;
 
 [name = 'consumption', mcp = "r > -1.94478", id = 'CCC']
 c(-1) = gam * c + delt;
 
 k = k(+1)^alph;
+end;
+
+initval; 
+c = 0.33;
+k = 0.67;
 end;

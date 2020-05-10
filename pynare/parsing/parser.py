@@ -19,14 +19,9 @@ import pynare.parsing.base as base
 import pynare.parsing.model as mdl 
 import pynare.parsing.variables as vbl 
 import pynare.parsing.functions as fnc 
+import pynare.parsing.simulation as sim
 
 from pynare.parsing.tokens import Token 
-
-RESERVED_KEYWORDS = {
-	**vbl.RESERVED_KEYWORDS,
-	**mdl.RESERVED_KEYWORDS,
-	**fnc.RESERVED_KEYWORDS
-}
 
 
 class Parser(fnc.Parser):
@@ -60,6 +55,54 @@ class Parser(fnc.Parser):
 			return self.parameter_list()
 		else:
 			return ast.Compound()
+
+	# SETTING INITIAL AND TERMINAL VALUES FOR SOLVING & SIMULATING
+	def initial_terminal_block(self):
+
+		init_block = term_block = hist_block = ast.Compound()
+
+		# the current configuration means if there are multiple blocks of the same
+		#	type, the last block will be the one assigned to InitTermBlock below
+		while self.current_token.type in sim.CONDITION_TYPES:
+			if self.current_token.type == sim.INITVAL:
+				init_block = self.init_value_block()
+			if self.current_token.type == sim.ENDVAL:
+				term_block = self.end_value_block()
+			if self.current_token.type == sim.HISTVAL:
+				hist_block = self.hist_value_block()
+
+		return ast.InitTermBlock(
+				initial=init_block,
+				terminal=term_block,
+				historical=hist_block
+		)
+		
+
+
+	def init_value_block(self):
+		self.eat(sim.INITVAL)
+		self.eat(base.SEMI) 
+		root = self.assignment()
+		self.eat(mdl.END)
+		self.eat(base.SEMI)
+		return root
+
+	def end_value_block(self):
+		self.eat(sim.ENDVAL)
+		self.eat(base.SEMI) 
+		root = self.assignment()
+		self.eat(mdl.END)
+		self.eat(base.SEMI)
+		return root
+
+	def hist_value_block(self):
+		self.eat(sim.HISTVAL)
+		self.eat(base.SEMI) 
+		root = self.assignment()
+		self.eat(mdl.END)
+		self.eat(base.SEMI)
+		return root
+
 
 
 	# MODEL DECLARATION
@@ -174,7 +217,10 @@ class Parser(fnc.Parser):
 		return ast.TagPair(key, value)
 
 
-	# MODEL EXPRESSION METHODS
+	# MODEL EXPRESSION METHODS - ONLY DIFFERENCE BETWEEN THESE ANALOGOUS ALBEGRA
+	#	AND FUNCTION PARSER METHODS IS THE matom() METHOD ALLOWS FOR OFFSERT VARS.
+	#	IN THE FUTURE, mcall() WILL BE ABLE TO RECOGNIZE EXPECTATION AND 
+	#	STEADYSTATE OPERATORS
 	def matom(self):
 		token = self.current_token
 
@@ -195,8 +241,22 @@ class Parser(fnc.Parser):
 							expr=self.mterm())
 			return node
 
+	def mcall(self):
+		while self.current_token.type == fnc.FUNCTION:
+			token = self.current_token
+			self.eat(FUNCTION)
+			self.eat(base.LPARE)
+			node = ast.Function(token=token,
+								expr=self.mexpr())
+			self.eat(base.RPARE)
+
+		try:
+			return node
+		except UnboundLocalError:
+			return self.matom()
+
 	def mexponent(self):
-		node = self.matom()
+		node = self.mcall()
 
 		while self.current_token.type == base.POWER:
 			token = self.current_token
@@ -341,14 +401,15 @@ class Parser(fnc.Parser):
 	def modfile(self):
 		decl_node = self.declaration()
 		assn_node = self.assignment()
+
 		model_block_node = self.model_block()
+		init_node = self.initial_terminal_block()
+
 		return ast.ModFile(declaration=decl_node, 
 							assignment=assn_node, 
-							model_block=model_block_node)
+							model_block=model_block_node,
+							simconditions=init_node
+		)
 		
 	def parse(self):
 		return self.modfile()
-
-
-
-

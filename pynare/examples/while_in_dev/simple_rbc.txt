@@ -7,19 +7,18 @@ comment
 */
 parameters aa alph bet delt gam;
 
-aa = 0.5;
-alph = -aa^exp(2);
+aa = 4;
+alph = -aa^(exp(2));
 bet = -erf(0.45*aa);
 gam = 0.9;
 delt = 0.01;
  
 % single comment 
 
-model(linear);
-# delta = delt + 1;
+model(linear, mopt);
 
-[name = 'consumption', mcp = 'r > -1.94478', id = 'CCC']
+[name = 'consumption', mcp = "r > -1.94478", id = 'CCC']
 c(-1) = gam * c + delt;
 
-k = k(-1)^alph;
+k = k(+1)^alph;
 end;

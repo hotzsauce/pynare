@@ -6,24 +6,25 @@ from pynare.parsing.interpreter import Interpreter
 from pynare.parsing.semantics import SemanticAnalyzer
 
 
+
 class Tester(object):
 	
 	def __init__(self, text):
 		self.lexer = Lexer(text)
 		self.parser = Parser(self.lexer)
 
+
 	def read(self):
-		tree = self.tree
+		self.check_semantics()
 
+		# self.interpreter = Interpreter(self.tree)
+		# return self.interpreter.interpret()
+
+
+	def check_semantics(self):
 		self.sem_analyzer = SemanticAnalyzer()
-		self.sem_analyzer.visit(tree)
+		self.sem_analyzer.visit(self.tree)
 
-		self.interpreter = Interpreter(tree)
-		result = self.interpreter.interpret()
-
-		self.interpreter.summarize_variables()
-
-		# print(self.sem_analyzer.scope)
 
 	def summarize_tokens(self):
 		for t in self.lexer.token_stream:

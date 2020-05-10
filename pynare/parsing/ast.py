@@ -103,7 +103,10 @@ class Param(AST):
 
 
 class Compound(AST):
-
+	"""
+	used whenever a series of ASTs of the same type are grouped together,
+	e.g. VarDeclarations, VarAssignments, Params
+	"""
 	def __init__(self):
 		self.children = list()
 
@@ -150,8 +153,6 @@ class TagPair(AST):
 		self.value = value
 
 
-
-
 class ModelExpression(AST):
 
 	def __init__(self, left, right, tag=None):
@@ -177,16 +178,16 @@ class Model(AST):
 class ModelBlock(AST):
 
 	def __init__(self, parameters, model):
-		self.parameters = parameters # (potentiall empty) list of Param objects
+		self.parameters = parameters 
 		self.model = model
 
 
 class ModFile(AST):
 
-	def __init__(self, declaration, assignment, model):
+	def __init__(self, declaration, assignment, model_block):
 		self.declaration = declaration
 		self.assignment = assignment
-		self.model = model
+		self.model_block = model_block
 
 
 

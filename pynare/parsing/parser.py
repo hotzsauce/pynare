@@ -42,23 +42,24 @@ class Parser(fnc.Parser):
 		"""
 		self.eat(base.LPARE)
 
-		paras = [ast.Param(self.current_token)]
+		root = ast.Compound()
+		root.children.append(ast.Param(self.current_token))
 		self.eat(base.ID)
 
 		while self.current_token.type == base.COMMA:
 			self.eat(base.COMMA)
-			paras.append(ast.Param(self.current_token))
+			root.children.append(ast.Param(self.current_token))
 			self.eat(base.ID)
 		self.eat(base.RPARE)
 
-		return paras
+		return root
 
 	def optional_parameter_list(self):
 		""" auxillary function to check for parameter list """
 		if self.peek_type() == base.LPARE:
 			return self.parameter_list()
 		else:
-			return list()
+			return ast.Compound()
 
 
 	# MODEL DECLARATION
@@ -309,10 +310,10 @@ class Parser(fnc.Parser):
 		return var_decl
 
 	def declaration(self):
-		var_decl = list()
-		var_decl.extend(self.vtype_declaration(vbl.REQUIRED_DECLARATIONS))
-		var_decl.extend(self.vtype_declaration(vbl.OPTIONAL_DECLARATIONS))
-		return var_decl
+		root = ast.Compound()
+		root.children.extend(self.vtype_declaration(vbl.REQUIRED_DECLARATIONS))
+		root.children.extend(self.vtype_declaration(vbl.OPTIONAL_DECLARATIONS))
+		return root
 
 	def variable_assignment(self):
 		"""
@@ -340,10 +341,10 @@ class Parser(fnc.Parser):
 	def modfile(self):
 		decl_node = self.declaration()
 		assn_node = self.assignment()
-		model_node = self.model_block()
-		# model_node = self.model_declaration()
-		# model_node = None
-		return ast.ModFile(decl_node, assn_node, model_node)
+		model_block_node = self.model_block()
+		return ast.ModFile(declaration=decl_node, 
+							assignment=assn_node, 
+							model_block=model_block_node)
 		
 	def parse(self):
 		return self.modfile()

@@ -150,6 +150,10 @@ class Lexer(object):
 				self.advance()
 				return Token(base.SEMI, ';')
 
+			if self.current_char == ':':
+				self.advance()
+				return Token(base.COLON, ';')
+
 			if self.current_char == '+':
 				self.advance()
 				return Token(base.PLUS, '+')

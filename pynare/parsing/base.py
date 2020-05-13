@@ -5,6 +5,7 @@ pynare Parser
 
 COMMA 		= 'COMMA' 
 SEMI 		= 'SEMI'
+COLON 		= 'COLON'
 EOF 		= 'EOF'
 ID 			= 'ID'
 NUMBER 		= 'NUMBER'

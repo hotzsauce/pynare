@@ -17,10 +17,6 @@ class Tester(object):
 	def read(self):
 		self.check_semantics()
 
-		# self.interpreter = Interpreter(self.tree)
-		# return self.interpreter.interpret()
-
-
 	def check_semantics(self):
 		self.sem_analyzer = SemanticAnalyzer()
 		self.sem_analyzer.visit(self.tree)

@@ -65,6 +65,9 @@ def _is_iterable_of_ast(obj):
 	except TypeError:
 		return False
 
+
+
+# ALGEBRA & FUNCTONAL NODES
 class BinaryOp(AST):
 
 	def __init__(self, left, op, right):
@@ -95,22 +98,6 @@ class Function(AST):
 		self.expr = expr
 
 
-class Param(AST):
-
-	def __init__(self, token):
-		self.token = token
-		self.value = self.token.value
-
-
-class Compound(AST):
-	"""
-	used whenever a series of ASTs of the same type are grouped together,
-	e.g. VarDeclarations, VarAssignments, Params
-	"""
-	def __init__(self):
-		self.children = list()
-
-
 class Var(AST):
 
 	def __init__(self, token):
@@ -118,11 +105,13 @@ class Var(AST):
 		self.value = self.token.value
 
 
-class OffsetVar(AST):
 
-	def __init__(self, var, offset):
-		self.var = var
-		self.offset = offset
+# BEFORE MODEL DECLARATION, VARIABLES DECLARED AND VALUES ASSIGNED
+class VarDeclaration(AST):
+
+	def __init__(self, var_node, vtype):
+		self.var_node = var_node
+		self.vtype = vtype
 
 
 class VarAssignment(AST):
@@ -133,24 +122,19 @@ class VarAssignment(AST):
 		self.right = right
 
 
-class VarDeclaration(AST):
 
-	def __init__(self, var_node, vtype):
-		self.var_node = var_node
-		self.vtype = vtype
+# MODEL DECLARATION NODES
+class ModelBlock(AST):
+
+	def __init__(self, parameters, model):
+		self.parameters = parameters 
+		self.model = model
 
 
-class Tag(AST):
+class Model(AST):
 
 	def __init__(self):
 		self.children = list()
-
-
-class TagPair(AST):
-
-	def __init__(self, key, value):
-		self.key = key
-		self.value = value
 
 
 class ModelExpression(AST):
@@ -169,26 +153,127 @@ class ModelExpression(AST):
 		self._tag = value
 
 
-class Model(AST):
+class Tag(AST):
 
 	def __init__(self):
 		self.children = list()
 
 
-class ModelBlock(AST):
+class TagPair(AST):
 
-	def __init__(self, parameters, model):
-		self.parameters = parameters 
-		self.model = model
+	def __init__(self, key, value):
+		self.key = key
+		self.value = value
+
+
+class OffsetVar(AST):
+
+	def __init__(self, var, offset):
+		self.var = var
+		self.offset = offset
+
+	
+
+# AFTER MODEL DECLARATION, THE INITIAL, TERMINAL, AND HISTORICAL VALUES
+#	OF EXOGENOUS AND ENDOGENOUS VARIABLES
+class ModelConditionBlock(AST):
+	""" setting initial, terminal, and historical values of a model """
+	def __init__(self):
+		self.initial = None
+		self.terminal = None
+		self.historical = None
+
+class ModelConditionValues(AST):
+	""" 
+	handled by Parser in same way as Compount node; only diff is this is 
+	initialized with a parameters attribute 
+	"""
+	def __init__(self, parameters):
+		self.parameters = parameters
+		self.children = list()
+
+
+# SHOCKS TO THE MODEL - NOT ENTIRELY SURE HOW THIS WILL BE IMPLEMENTED YET
+class ShockBlock(AST):
+
+	def __init__(self):
+		self.children = list()
+
+class CorrelatedShock(AST):
+
+	def __init__(self, left, right, expr):
+		self.left = left
+		self.right = right
+		self.expr = expr
+
+class CovaryingShock(AST):
+
+	def __init__(self, left, right, expr):
+		self.left = left
+		self.right = right
+		self.expr = expr
+
+class VarianceShock(AST):
+
+	def __init__(self, token, expr):
+		self.token = token
+		self.value = self.token.value
+		self.expr = expr
+
+class StdErrShock(AST):
+
+	def __init__(self, token, expr):
+		self.token = token
+		self.value = self.token.value
+		self.expr = expr
+
+class DeterministicShock(AST):
+
+	def __init__(self, token, periods, values):
+		self.token = token
+		self.value = self.token.value
+		self.periods = periods
+		self.values = values
+
+class ShockPeriod(AST):
+
+	def __init__(self, start, end):
+		self.start = start
+		self.end = end
+
+class ShockValue(AST):
+
+	def __init__(self, token):
+		self.token = token
+
+
+# MISCELLANEOUS NODES
+class Param(AST):
+
+	def __init__(self, token):
+		self.token = token
+		self.value = self.token.value
+
+
+class Compound(AST):
+	"""
+	used whenever a series of ASTs of the same type are grouped together,
+	e.g. VarDeclarations, VarAssignments, Params
+	"""
+	def __init__(self):
+		self.children = list()
+
 
 
 class ModFile(AST):
 
-	def __init__(self, declaration, assignment, model_block):
+	def __init__(self, 
+		declaration, 
+		assignment, 
+		model_block,
+		simconditions
+	):
 		self.declaration = declaration
 		self.assignment = assignment
 		self.model_block = model_block
-
-
-
-
+		self.simconditions = simconditions

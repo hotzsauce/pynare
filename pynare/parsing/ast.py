@@ -75,13 +75,11 @@ class BinaryOp(AST):
 		self.op = op
 		self.right = right
 
-
 class UnaryOp(AST):
 
 	def __init__(self, op, expr):
 		self.op = op
 		self.expr = expr
-
 
 class Num(AST):
 
@@ -89,14 +87,12 @@ class Num(AST):
 		self.token = token
 		self.value = self.token.value
 
-
 class Function(AST):
 
 	def __init__(self, token, expr):
 		self.token = token
 		self.value = self.token.value
 		self.expr = expr
-
 
 class Var(AST):
 
@@ -112,7 +108,6 @@ class VarDeclaration(AST):
 	def __init__(self, var_node, vtype):
 		self.var_node = var_node
 		self.vtype = vtype
-
 
 class VarAssignment(AST):
 
@@ -130,13 +125,11 @@ class ModelBlock(AST):
 		self.parameters = parameters 
 		self.model = model
 
-
 class Model(AST):
 
 	def __init__(self):
 		self.children = list()
-
-
+ 
 class ModelExpression(AST):
 
 	def __init__(self, left, right, tag=None):
@@ -152,19 +145,16 @@ class ModelExpression(AST):
 	def tag(self, value):
 		self._tag = value
 
-
-class Tag(AST):
+class TagGroup(AST):
 
 	def __init__(self):
 		self.children = list()
 
+class Tag(AST):
 
-class TagPair(AST):
-
-	def __init__(self, key, value):
+	def __init__(self, key, value=None):
 		self.key = key
 		self.value = value
-
 
 class OffsetVar(AST):
 
@@ -191,6 +181,7 @@ class ModelConditionValues(AST):
 	def __init__(self, parameters):
 		self.parameters = parameters
 		self.children = list()
+
 
 
 # SHOCKS TO THE MODEL - NOT ENTIRELY SURE HOW THIS WILL BE IMPLEMENTED YET
@@ -247,12 +238,53 @@ class ShockValue(AST):
 		self.token = token
 
 
+
+# STEADY STATE COMMANDS
+class SteadyStateBlock(AST):
+
+	def __init__(self):
+		self.steady = None
+		self.homotopy = None
+		self.steady_state_model = None
+
+class SteadyCommand(AST):
+
+	def __init__(self, parameters):
+		self.parameters = parameters
+
+class HomotopyBlock(AST):
+
+	def __init__(self):
+		self.children = list()
+
+class HomotopyVar(AST):
+
+	def __init__(self, token, start, end):
+		self.token = token
+		self.start = start
+		self.end = end
+
+class SteadyStateModel(AST):
+
+	def __init__(self):
+		self.children = list()
+
+class SteadyStateModelExpression(AST):
+
+	def __init__(self, token, expr):
+		self.token = token
+		self.expr = expr
+
+
+
+
 # MISCELLANEOUS NODES
 class Param(AST):
 
-	def __init__(self, token):
+	def __init__(self, token, value=None):
 		self.token = token
-		self.value = self.token.value
+		self.value = value
+
 
 
 class Compound(AST):

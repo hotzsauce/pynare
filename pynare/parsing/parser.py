@@ -10,13 +10,12 @@ different parts of a .mod file, and also exemplifying the inheritance and
 polymorphism of Python classes
 """
 
-import pynare.parsing.algebra as alg
-
 
 import pynare.parsing.ast as ast
 import pynare.parsing.base as base
 
 import pynare.parsing.model as mdl 
+import pynare.parsing.steady as sdy
 import pynare.parsing.variables as vbl 
 import pynare.parsing.functions as fnc 
 import pynare.parsing.simulation as sim
@@ -254,7 +253,7 @@ class Parser(fnc.Parser):
 		if self.current_token.type == base.POUND:
 			return self.local_declaration()
 		elif self.current_token.type == base.LBRACKET:
-			tag = self.tag()
+			tag = self.tag_group()
 			node = self.model_expression()
 			node.tag = tag
 			return node
@@ -293,32 +292,35 @@ class Parser(fnc.Parser):
 
 		return ast.VarAssignment(left, token, right)
 
-	def tag(self):
+	def tag_group(self):
 		"""
-		tag : LBRACKET tag_list RBRACKET
+		tag_group : LBRACKET tag_list RBRACKET
 		"""
 		self.eat(base.LBRACKET)
-		root = ast.Tag()
-		root.children.append(self.tag_pair())
+		root = ast.TagGroup()
+		root.children.append(self.tag())
 
 		# tag_list doesn't have it's own method; its done right here
 		while self.current_token.type == base.COMMA:
 			self.eat(base.COMMA)
-			root.children.append(self.tag_pair())
+			root.children.append(self.tag())
 		self.eat(base.RBRACKET)
 
 		return root
 
-	def tag_pair(self):
+	def tag(self):
 		"""
-		tag_pair : ID EQUALS STRING
+		tag : ID EQUALS STRING
+			| ID 		<- only if its one of the steady tags
 		"""
 		key = self.current_token
 		self.eat(base.ID)
+		if key.value in sdy.TAGS:
+			return ast.Tag(key)
 		self.eat(base.EQUALS)
 		value = self.current_token
 		self.eat(base.STRING)
-		return ast.TagPair(key, value)
+		return ast.Tag(key, value)
 
 
 	# SETTING INITIAL AND TERMINAL VALUES FOR SOLVING & SIMULATING
@@ -549,24 +551,126 @@ class Parser(fnc.Parser):
 		expr = self.expr()
 		self.eat(base.RPARE)
 		return ast.ShockValue(token=expr)
-	
+
+
+	# PARSING THE STEADY-STATE COMMANDS
+	def steady_state_block(self):
+
+		root = ast.SteadyStateBlock()
+
+		if self.current_token.type == sdy.HOMOTOPYSETUP:
+			root.homotopy = self.homotopy_block()
+		if self.current_token.type == sdy.STEADYSTATEMODEL:
+			root.steady_state_model = self.steady_state_model()
+		if self.current_token.type == sdy.STEADY:
+			root.steady = self.steady_command()
+		return root
+
+	def steady_command(self):
+		self.eat(sdy.STEADY)
+		param = self.optional_parameter_list()
+		self.eat(base.SEMI)
+		return ast.SteadyCommand(param)
+
+	def homotopy_block(self):
+		"""
+		homotopy_block : HOMOTOPYSETUP SEMI (homotopy_variable SEMI)+ END SEMI
+		"""
+		self.eat(sdy.HOMOTOPYSETUP)
+		self.eat(base.SEMI)
+		root = ast.HomotopyBlock()
+		root.children.append(self.homotopy_variable())
+		self.eat(base.SEMI)
+
+		while self.current_token.type == base.ID:
+			root.children.append(self.homotopy_variable())
+			self.eat(base.SEMI)
+
+		self.eat(mdl.END)
+		self.eat(base.SEMI)
+
+		return root 
+
+	def homotopy_variable(self):
+		"""
+		homotopy_variable : VAR COMMA EXPR
+						  | VAR COMMA EXPR COMMA EXPR
+		"""
+		token = self.variable()
+		self.eat(base.COMMA)
+		first_expr = self.expr()
+		
+		if self.current_token.type == base.COMMA:
+			self.eat(base.COMMA)
+			second_expr = self.expr()
+			return ast.HomotopyVar(token=token, start=first_expr, end=second_expr)
+
+		return ast.HomotopyVar(token=token, start=first_expr, end=first_expr)
+
+	def steady_state_model(self):
+		"""
+
+		"""
+
+		# DYNARE STEADY STATE MODEL CAN ALSO PARSE FUNCTIONS, REFER TO DOC
+		self.eat(sdy.STEADYSTATEMODEL)
+		self.eat(base.SEMI)
+		
+		root = ast.SteadyStateModel()
+		while self.current_token.type == base.ID:
+			root.children.append(self.steady_state_model_expr())
+			self.eat(base.SEMI)
+		self.eat(mdl.END)
+		self.eat(base.SEMI)
+
+		return root
+
+	def steady_state_model_expr(self):
+		token = self.variable()
+		self.eat(base.EQUALS)
+		expr = self.expr()
+		return ast.SteadyStateModelExpression(token=token, expr=expr)
+
+
+
 	
 	# PARSING LISTS OF PARAMETERS - NOT EXCLUSIVE TO MODEL BLOCK, BUT IT'S 
 	#	THE FIRST TIME IT CAME UP
+	def parameter(self):
+		"""
+		parameter : ID
+				  | ID EQUALS STRING
+				  | ID EQUALS NUMBER
+		"""
+		token = self.current_token
+		self.eat(base.ID)
+		if self.current_token.type == base.EQUALS:
+			self.eat(base.EQUALS)
+
+			if self.current_token.type == base.NUMBER:
+				value = self.current_token
+				self.eat(base.NUMBER)
+				return ast.Param(token=token, value=value)
+			else:
+				value = self.current_token
+				self.eat(base.STRING)
+				return ast.Param(token=token, value=value)
+
+		return ast.Param(token=token)
+
+
 	def parameter_list(self):
 		"""
-		parameter_list : LPARE ID (COMMA ID)* RPARE
+		parameter_list : LPARE parameter (COMMA parameter)* RPARE
 		"""
 		self.eat(base.LPARE)
 
 		root = ast.Compound()
-		root.children.append(ast.Param(self.current_token))
-		self.eat(base.ID)
+		root.children.append(self.parameter())
 
 		while self.current_token.type == base.COMMA:
 			self.eat(base.COMMA)
-			root.children.append(ast.Param(self.current_token))
-			self.eat(base.ID)
+			root.children.append(self.parameter())
 		self.eat(base.RPARE)
 
 		return root
@@ -578,21 +682,24 @@ class Parser(fnc.Parser):
 		else:
 			return ast.Compound()
 
-
 	def modfile(self):
 		decl_node = self.declaration()
 		assn_node = self.assignment()
 
-		model_block_node = self.model_block()
+		model_node = self.model_block()
 		cond_node = self.model_condition_block()
 
 		shock_node = self.shock_block()
+		steady_state_node = self.steady_state_block()
+		steady_state_node.describe()
+
 
 		return ast.ModFile(declaration=decl_node, 
 							assignment=assn_node, 
-							model_block=model_block_node,
+							model_block=model_node,
 							simconditions=cond_node
 		)
 		
+
 	def parse(self):
 		return self.modfile()

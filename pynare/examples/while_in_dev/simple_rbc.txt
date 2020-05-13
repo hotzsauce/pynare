@@ -21,18 +21,26 @@ model(linear);
 [name = 'consumption', mcp = "r > -1.94478", id = 'CCC']
 c(-1) = gam * c + delt;
 
+[dynamic]
 k = k(+1)^alph;
 end;
 
 initval(all_values_required); 
 c = 0.33;
 k = 0.67;
+x = 1;
 end;
 
 shocks;
 var y; 
 periods 3 4:8 15:16;
 values 4 5 (8+8);
-
 var x; stderr sqrt(4*2)/(4*2);
+end;
+
+% steady;
+
+homotopy_setup;
+gam, 0.5, sqrt(4);
+x, 2;
 end;

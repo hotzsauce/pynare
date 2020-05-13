@@ -7,8 +7,9 @@ https://www.dynare.org/manual.pdf
 import pynare.parsing.base as base
 
 import pynare.parsing.model as mdl
+import pynare.parsing.steady as sdy
 import pynare.parsing.variables as vbl 
-import pynare.parsing.functions as fnc 
+import pynare.parsing.functions as fnc  
 import pynare.parsing.simulation as sim
 
 from pynare.parsing.tokens import Token
@@ -16,9 +17,10 @@ from pynare.parsing.tokens import Token
 
 RESERVED_KEYWORDS = {
 	**vbl.RESERVED_KEYWORDS,
+	**sdy.RESERVED_KEYWORDS,
 	**mdl.RESERVED_KEYWORDS,
 	**fnc.RESERVED_KEYWORDS,
-	**sim.RESERVED_KEYWORDS
+	**sim.RESERVED_KEYWORDS,
 }
 
 

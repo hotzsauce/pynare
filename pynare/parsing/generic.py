@@ -10,7 +10,7 @@ class ABCParser(object):
 		self.current_token = self.lexer.get_next_token()
 
 	def error(self):
-		raise PynareSyntaxError(self.lexer.text, 20)
+		raise PynareSyntaxError(self.lexer.text, 20) from None
 
 	def type_check(self, *args):
 		if self.current_token.type not in args:
@@ -27,13 +27,13 @@ class ABCParser(object):
 		else:
 			self.error()
 
-	def peek(self):
-		return self.lexer.see_next_token()
+	def peek(self, k=0):
+		return self.lexer.see_future_token(k=k)
 
-	def peek_type(self):
+	def peek_type(self, k=0):
 		# just because I don't like seeing 'self.peek().type ==' in higher-level
 		#	parsers
-		return self.peek().type
+		return self.peek(k=k).type
 
 
 

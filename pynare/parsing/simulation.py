@@ -6,7 +6,6 @@ from pynare.parsing.tokens import Token
 INITVAL 	= 'initval'
 ENDVAL 		= 'endval'
 HISTVAL 	= 'histval'
-STEADY 		= 'steady'
 RESID 		= 'resid'
 INITVALFILE = 'initval_file'
 HISTVALFILE = 'histval_file'

@@ -1,10 +1,10 @@
 
 
+"""
 from pynare.parsing.lexer import Lexer
 from pynare.parsing.parser import Parser
 from pynare.parsing.interpreter import Interpreter
 from pynare.parsing.semantics import SemanticAnalyzer
-
 
 
 class Tester(object):
@@ -37,3 +37,4 @@ class Tester(object):
 		else:
 			self._tree = self.parser.parse()
 			return self._tree
+"""

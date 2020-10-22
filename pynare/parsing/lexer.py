@@ -4,76 +4,81 @@ tokens reflecting the Dynare language. A pdf of the manual can be found here:
 https://www.dynare.org/manual.pdf
 """
 
+
+
 import pynare.parsing.base as base
 
-import pynare.parsing.model as mdl
-import pynare.parsing.steady as sdy
-import pynare.parsing.variables as vbl 
-import pynare.parsing.functions as fnc  
-import pynare.parsing.simulation as sim
-
-from pynare.parsing.tokens import Token
+from pynare.parsing.base import Token
+from pynare.parsing.dynare import dynare_reserved_kw
 
 
-RESERVED_KEYWORDS = {
-	**vbl.RESERVED_KEYWORDS,
-	**sdy.RESERVED_KEYWORDS,
-	**mdl.RESERVED_KEYWORDS,
-	**fnc.RESERVED_KEYWORDS,
-	**sim.RESERVED_KEYWORDS,
-}
+class BaseLexer(object):
+	"""
+	language-agnostic lexer
+	"""
 
-
-class Lexer(object):
-
-	def __init__(self, text):
+	def __init__(
+		self, 
+		text: str
+	):
 		self.text = text
 
-		self.token_pos = self.pos = 0
+		self.line_pos = self.pos = 0
+		self.current_line = 1 # I don't know any text editors that 0-index rows
 		self.current_char = self.text[self.pos]
+
+
+	def tokenize(self):
+		self.token_pos = 0
 		self.token_stream = list()
 
-		self.tokenize()
+		while self.current_char is not None:
+			t = self.next_token()
+			self.token_stream.append(t)
 
-	def error(self, char):
-		msg = 'Invalid character: {}'.format(repr(char))
-		raise Exception(msg)
+		self.token_stream.append(Token(base.EOF, None, self.current_line, self.line_pos))
+
+
+	def reset_lexer(self):
+		self.token_pos = 0
+
+
+	def error(self, symbol):
+		if symbol:
+			raise SyntaxError(
+				f'unrecognized symbol: {repr(symbol)} in '
+				f'line {self.current_line}, column {self.line_pos}'
+			)
+		
 
 	def advance(self, n=1):
-		""" advance the position and set the current character """
 		self.pos += n
+		self.line_pos += n
 		try:
+			if self.current_char == '\n':
+				# moving line idx down to the next line, and resetting the 
+				#	line position marker
+				self.current_line += 1
+				self.line_pos = 0
+
 			self.current_char = self.text[self.pos]
+
 		except IndexError:
 			self.current_char = None
 
+
 	def peek(self, n=1):
-		""" returns the next character w/o incrementing past the current one """
 		peek_pos = self.pos + n
 		try:
 			return self.text[peek_pos]
 		except IndexError:
 			return None
 
+
 	def skip_whitespace(self):
 		while self.current_char is not None and self.current_char.isspace():
 			self.advance()
 
-	def skip_comment(self):
-		""" single line comments are signified by '%' """
-		self.advance()
-		while self.current_char is not '\n':
-			self.advance()
-		self.advance()
-		self.skip_whitespace() # just in case
-
-	def skip_multiline_comment(self):
-		""" multiline comments begin '/*' and end '*/' """
-		self.advance(n=2)
-		while (self.current_char != '*') and (self.peek() != '/'):
-			self.advance()
-		self.advance(n=2)
-		self.skip_whitespace() # just in case
 
 	def _id(self):
 		""" 
@@ -82,11 +87,16 @@ class Lexer(object):
 		and assume they're a variable
 		"""
 		result = ''
-		while base.is_valid_varchar(self.current_char):
+		while self.valid_varchar(self.current_char):
 			result += self.current_char
 			self.advance()
-		token = RESERVED_KEYWORDS.get(result, Token(base.ID, result))
+		try:
+			token = self.reserved_kw[result]
+		except KeyError:
+			token = base.reserved_funcs.get(result, Token(base.ID, result))
+		token.assign_loc(self.current_line, self.line_pos)
 		return token
+
 
 	def _number(self):
 		"""
@@ -96,12 +106,13 @@ class Lexer(object):
 		result = ''
 		while (
 			self.current_char is not None 
-			and base.is_valid_numchar(self.current_char)
+			and self.valid_numchar(self.current_char)
 		):
 			result += self.current_char
 			self.advance()
 		num = float(result)
-		return Token(base.NUMBER, num)
+		return Token(base.NUMBER, num, self.current_line, self.line_pos)
+
 
 	def _string(self, quote):
 		"""
@@ -114,105 +125,168 @@ class Lexer(object):
 			result += self.current_char
 			self.advance()
 		self.advance()
-		return Token(base.STRING, result)
+		return Token(base.STRING, result, self.current_line, self.line_pos)
+
 
 	def next_token(self):
 
 		while self.current_char is not None:
 
-			if self.current_char.isspace():
+			while self.current_char.isspace():
 				self.skip_whitespace()
 
-			if self.current_char == '%':
-				self.skip_comment()
+			while self.is_singleline_comment():
+				self.skip_singleline_comment()
 
-			if (
-				self.current_char == '/' 
-				and self.peek() == '*'
-			):
+			while self.is_multiline_comment():
 				self.skip_multiline_comment()
 
-			if base.is_valid_varname_firstchar(self.current_char):
+			if self.valid_begchar(self.current_char):
 				return self._id()
 
-			if base.is_valid_numchar(self.current_char):
+			if self.valid_numchar(self.current_char):
 				return self._number()
 
+
+			#
+			# Handling strings - not entirely sure what to do here. Matlab's 
+			#	transpose character: " ' " can also be used make a character
+			#	array. We tokenize any single quote as a string, so anyone
+			#	who takes the transpose of a matrix is SOL for now
+			#
 			if self.current_char == '\'':
 				return self._string(quote='\'')
 
 			if self.current_char == '\"':
 				return self._string(quote='\"')
 
+
+			#
+			# Grammar and Logical Symbols
+			#
 			if self.current_char == ',':
 				self.advance()
-				return Token(base.COMMA, ',')
+				return Token(base.COMMA, ',', self.current_line, self.line_pos)
+
+			if self.current_char == '.':
+				self.advance()
+				return Token(base.PERIOD, '.', self.current_line, self.line_pos)
 
 			if self.current_char == ';':
 				self.advance()
-				return Token(base.SEMI, ';')
+				return Token(base.SEMI, ';', self.current_line, self.line_pos)
 
 			if self.current_char == ':':
 				self.advance()
-				return Token(base.COLON, ';')
-
-			if self.current_char == '+':
-				self.advance()
-				return Token(base.PLUS, '+')
-
-			if self.current_char == '-':
-				self.advance()
-				return Token(base.MINUS, '-')
-
-			if self.current_char == '*':
-				self.advance()
-				return Token(base.MUL, '*')
-
-			if self.current_char == '/':
-				self.advance()
-				return Token(base.DIV, '/')
-
-			if self.current_char == '^':
-				self.advance()
-				return Token(base.POWER, '^')
-
-			if self.current_char == '(':
-				self.advance()
-				return Token(base.LPARE, '(')
-
-			if self.current_char == ')':
-				self.advance()
-				return Token(base.RPARE, ')')
-
-			if self.current_char == '[':
-				self.advance()
-				return Token(base.LBRACKET, '[')
-
-			if self.current_char == ']':
-				self.advance()
-				return Token(base.RBRACKET, ']')
+				return Token(base.COLON, ':', self.current_line, self.line_pos)
 
 			if self.current_char == '#':
 				self.advance()
-				return Token(base.POUND, '#')
+				return Token(base.POUND, '#', self.current_line, self.line_pos)
+
+			if self.current_char == '&':
+				self.advance()
+				return Token(base.AMPERSAND, '&', self.current_line, self.line_pos)
+
+			if self.current_char == '|':
+				self.advance()
+				return Token(base.PIPE, '|', self.current_line, self.line_pos)
+
+			if self.current_char == '@':
+				self.advance()
+				return Token(base.ATSIGN, '@', self.current_line, self.line_pos)
+
+			if self.current_char == '!':
+				self.advance()
+				return Token(base.EXCLAMATION, '!', self.current_line, self.line_pos)
+
+			if self.current_char == '~':
+				self.advance()
+				return Token(base.TILDE, '~', self.current_line, self.line_pos)
+
+			if self.current_char == '%':
+				self.advance()
+				return Token(base.PERCENT, '%', self.current_line, self.line_pos)
+
+			if self.current_char == '<':
+				self.advance()
+				return Token(base.LT, '<', self.current_line, self.line_pos)
+
+			if self.current_char == '<' and self.peek() == '=':
+				self.advance(2)
+				return Token(base.LTOE, '<=', self.current_line, self.line_pos)
+
+			if self.current_char == '>':
+				self.advance()
+				return Token(base.GT, '>', self.current_line, self.line_pos)
+
+			if self.current_char == '>' and self.peek() == '=':
+				self.advance(2)
+				return Token(base.GTOE, '>=', self.current_line, self.line_pos)
+
+			if self.current_char == '=' and self.peek() == '=':
+				self.advance(2)
+				return Token(base.EQUALITY, '==', self.current_line, self.line_pos)
+
+			if self.current_line == '\\':
+				self.advance()
+				return Token(base.BACKSLASH, '\\', self.current_line, self.line_pos)
+
+
+			# 
+			# Common mathematical symbols
+			# 
+			if self.current_char == '+':
+				self.advance()
+				return Token(base.PLUS, '+', self.current_line, self.line_pos)
+
+			if self.current_char == '-':
+				self.advance()
+				return Token(base.MINUS, '-', self.current_line, self.line_pos)
+
+			if self.current_char == '*':
+				self.advance()
+				return Token(base.MUL, '*', self.current_line, self.line_pos)
+
+			if self.current_char == '/':
+				self.advance()
+				return Token(base.DIV, '/', self.current_line, self.line_pos)
+
+			if self.is_exponent():
+				return self._exponent()
+
+			if self.current_char == '(':
+				self.advance()
+				return Token(base.LPARE, '(', self.current_line, self.line_pos)
+
+			if self.current_char == ')':
+				self.advance()
+				return Token(base.RPARE, ')', self.current_line, self.line_pos)
+
+			if self.current_char == '[':
+				self.advance()
+				return Token(base.LBRACKET, '[', self.current_line, self.line_pos)
+
+			if self.current_char == ']':
+				self.advance()
+				return Token(base.RBRACKET, ']', self.current_line, self.line_pos)
+
+			if self.current_char == '{':
+				self.advance()
+				return Token(base.LBRACE, '{', self.current_line, self.line_pos)
+
+			if self.current_char == '}':
+				self.advance()
+				return Token(base.RBRACE, '}', self.current_line, self.line_pos)
 
 			if self.current_char == '=':
 				self.advance()
-				return Token(base.EQUALS, '=')
+				return Token(base.EQUALS, '=', self.current_line, self.line_pos)
 
-			if self.current_char is not None:
-				self.error(self.current_char)
+			self.error(self.current_char)
 
-	def tokenize(self):
+		return Token(base.EOF, None, self.current_line, self.line_pos)
 
-		while self.current_char is not None:
-			t = self.next_token()
-			# 'if' only necessary b/c self.next_token() returns None when Lexer 
-			#	reaches the end of the source code. Probably indicates this 
-			#	part needs to be refactored sometime
-			if isinstance(t, Token):
-				self.token_stream.append(t)
-		self.token_stream.append(Token(base.EOF, None))
 
 	def get_next_token(self):
 		"""
@@ -220,9 +294,16 @@ class Lexer(object):
 		the Parser's perspective, however, hence the name), and iterates the token
 		position by one
 		"""
+
+		# if the token stream is ran through multiple times for some reason, we 
+		#	need to reset the token position
+		if self.token_pos >= len(self.token_stream):
+			self.token_pos += 1
+		
 		token = self.token_stream[self.token_pos]
 		self.token_pos += 1 
 		return token
+
 
 	def see_future_token(self, k):
 		future_pos = (self.token_pos - 1) + k
@@ -231,6 +312,7 @@ class Lexer(object):
 		else:
 			return self.token_stream[future_pos]
 
+
 	def see_next_token(self):
 		"""
 		Returns the token at the current token position (it's the next token from
@@ -238,3 +320,81 @@ class Lexer(object):
 		self.get_next_token, the position is not incremented
 		"""
 		return self.see_future_token(k=0)
+
+
+
+
+class DynareLexer(BaseLexer):
+
+	reserved_kw = dynare_reserved_kw
+
+	def __init__(
+		self, 
+		text: str
+	):
+
+		super().__init__(text)
+
+	def valid_varchar(self, c):
+		# dynare variable names can have numbers, letters, or underscores
+		try:
+			return c.isalnum() or c == '_'
+		except AttributeError:
+			return False
+
+	def valid_begchar(self, c):
+		# dynare/matlab varnames can only begin with letters
+		try:
+			return c.isalpha()
+		except AttributeError:
+			return False
+
+	def valid_numchar(self, c):
+		# numbers can either begin with a decimal or number 
+		try:
+			return c.isdigit() or c == '.'
+		except AttributeError:
+			return False
+
+	def is_singleline_comment(self):
+		# single line comments are signified by '%' or '//'
+		if (
+			(self.current_char == '%')
+			or (self.current_char == '/' and self.peek() == '/')
+		):
+			return True
+		return False
+
+
+	def skip_singleline_comment(self):
+		""" single line comments are signified by '%' or '//' """
+		while self.current_char is not '\n':
+			self.advance()
+		self.skip_whitespace() # just in case
+
+	
+	def is_multiline_comment(self):
+		if self.current_char == '/' and self.peek() == '*':
+			return True
+		return False
+
+	def skip_multiline_comment(self):
+		# multiline comments begin '/*' and end '*/' 
+		self.advance(n=2)
+		while (self.current_char != '*') and (self.peek() != '/'):
+			self.advance()
+
+		# skipping the closing '*/'
+		self.advance(n=2)
+		self.skip_whitespace() # just in case
+
+	def is_exponent(self):
+		if self.current_char == '^':
+			return True
+		return False
+
+	def _exponent(self):
+		# is_exponent makes decision based on matlab's exponentiation symbol,
+		#	but we use python's exponentiation symbol for the token
+		self.advance()
+		return Token(base.POWER, '**', self.current_line, self.line_pos)

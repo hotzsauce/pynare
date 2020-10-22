@@ -1,110 +1,331 @@
 """ 
-module for the most-extensive pynare Parser - "most-extensive" here meaning it
-is the parser that is able to parse the largest subset of the Dynare/Matlab 
-language. 
-	There are other, smaller, Parsers in other pynare.parsing modules that
-handle much simpler things, like the parser in the algebra module that can handle
-expressions with '+', '-', '*', '/', '^', for example. The parser here inherits 
-the methods of those simpler parsers, emphasizing the distinctions between 
-different parts of a .mod file, and also exemplifying the inheritance and 
-polymorphism of Python classes
+language parsers
 """
 
+from __future__ import annotations
+
+from typing import List, Union, Tuple
 
 import pynare.parsing.ast as ast
 import pynare.parsing.base as base
+import pynare.parsing.dynare as dyn
 
-import pynare.parsing.model as mdl 
-import pynare.parsing.steady as sdy
-import pynare.parsing.variables as vbl 
-import pynare.parsing.functions as fnc 
-import pynare.parsing.simulation as sim
-
-from pynare.parsing.tokens import Token 
+from pynare.parsing.base import Token 
+from pynare.errors import PynareSyntaxError
 
 
-class Parser(fnc.Parser):
 
-	def __init__(self, lexer):
-		super().__init__(lexer)
+class BaseParser(object):
+	"""
+	parser class for basic parser functions - type checking, peeking at 
+	future tokens, raising errors. Also has mathematical expression 
+	parsing functionality that would be shared across all languages
+	"""
 
-	# MODEL EXPRESSION METHODS - ONLY DIFFERENCE BETWEEN THESE ANALOGOUS ALBEGRA
-	#	AND FUNCTION PARSER METHODS IS THE matom() METHOD ALLOWS FOR OFFSERT VARS.
-	#	IN THE FUTURE, mcall() WILL BE ABLE TO RECOGNIZE EXPECTATION AND 
-	#	STEADYSTATE OPERATORS
-	def matom(self):
+	def __init__(
+		self, 
+		lexer: BaseLexer
+	):
+		self.lexer = lexer
+
+
+		try:
+			self.current_token = self.lexer.get_next_token()
+		except AttributeError:
+			self.lexer.tokenize()
+			self.current_token = self.lexer.get_next_token()
+
+	def error(self):
+		raise PynareSyntaxError(self.current_token) 
+
+	# def type_check(self, *args):
+	# 	if self.current_token.type not in args:
+	# 		raise TypeError(self.current_token.type)
+
+	def eat(self, token_type):
+		"""
+		Compare the current token type with the passed token type and if they 
+		match, assign the next token to current token. Otherwise, error
+		"""
+		if self.current_token.type == token_type:
+			self.current_token = self.lexer.get_next_token()
+		else:
+			self.error()
+
+	def peek(self, k=0):
+		return self.lexer.see_future_token(k=k)
+
+	def peek_type(self, k=0):
+		return self.peek(k=k).type
+
+
+	def atom(self) -> AST:
+		"""
+		atom : ID
+			 | NUMBER
+			 | LPARE expr RPARE
+			 | (NIMUS | PLUS) term
+		"""
 		token = self.current_token
 
 		if token.type == base.ID:
-			var = self.maybe_offset_variable()
-			return var
+			self.eat(base.ID)
+			return ast.Var(token)
+
 		elif token.type == base.NUMBER:
 			self.eat(base.NUMBER)
 			return ast.Num(token)
+
 		elif token.type == base.LPARE:
 			self.eat(base.LPARE)
-			node = self.mexpr()
+			node = self.expr()
 			self.eat(base.RPARE)
 			return node
+
 		elif token.type in (base.MINUS, base.PLUS):
 			self.eat(token.type)
-			node = ast.UnaryOp(op=token,
-							expr=self.mterm())
-			return node
+			# sending 'expr' to term() instead of expr() is what ensures
+			#	the proper unary operation functionality
+			return ast.UnaryOp(
+				op=token,
+				expr=self.term()
+			)
 
-	def mcall(self):
-		while self.current_token.type == fnc.FUNCTION:
+		self.error()
+
+
+	def call(self) -> AST:
+		"""
+		call : atom 
+			 | FUNCTION LPARE expr RPARE
+
+		we don't call the lower-level method first like we do in other expression
+		methods, because the atom() method doesn't recognize tokens of type
+		FUNCTION. Instead we do the try ... except below
+		"""
+		while self.current_token.type == base.FUNCTION:
 			token = self.current_token
-			self.eat(FUNCTION)
+			self.eat(base.FUNCTION)
 			self.eat(base.LPARE)
-			node = ast.Function(token=token,
-								expr=self.mexpr())
+
+			node = ast.Function(
+				token=token,
+				expr=self.expr()
+			)
+
 			self.eat(base.RPARE)
 
 		try:
 			return node
 		except UnboundLocalError:
-			return self.matom()
+			return self.atom()
 
-	def mexponent(self):
-		node = self.mcall()
+
+	def exponent(self) -> AST:
+		"""
+		exponent : call (POWER exponent)*
+		"""
+		node = self.call()
 
 		while self.current_token.type == base.POWER:
 			token = self.current_token
 			self.eat(base.POWER)
 
-			node = ast.BinaryOp(left=node,
-							op=token,
-							right=self.mexponent())
+			# sending the 'right' attribute to exponent() instead of atom()
+			#	like other binary operations is what ensures exponentiation 
+			#	to be right-associative
+			return ast.BinaryOp(
+				left=node,
+				op=token,
+				right=self.exponent()
+			)
+
 		return node
 
-	def mterm(self):
-		node = self.mexponent()
+
+	def term(self) -> AST:
+		"""
+		term : exponent ((MUL | DIV) exponent)*
+		"""
+		node = self.exponent()
 
 		while self.current_token.type in (base.MUL, base.DIV):
 			token = self.current_token
 			self.eat(token.type)
 
-			node = ast.BinaryOp(left=node,
-							op=token,
-							right=self.mexponent())
+			node = ast.BinaryOp(
+				left=node,
+				op=token,
+				right=self.exponent()
+			)
+
 		return node
 
-	def mexpr(self):
-		node = self.mterm()
+
+	def expr(self) -> AST:
+		"""
+		expr : term ((PLUS | MINUS) term)*
+		"""
+		node = self.term()
 
 		while self.current_token.type in (base.PLUS, base.MINUS):
 			token = self.current_token
 			self.eat(token.type)
 
-			node = ast.BinaryOp(left=node,
-							op=token,
-							right=self.mterm())
+			node = ast.BinaryOp(
+				left=node,
+				op=token,
+				right=self.term()
+			)
+
 		return node
 
 
-	# OUT-OF- and IN-PERIOD VARIABLES
-	def period_offset(self):
+class DynareParser(BaseParser):
+
+	def __init__(
+		self,
+		lexer: BaseLexer
+	):
+		super().__init__(lexer)
+
+	def parse(self) -> ModelFile:
+		return self.model_file()
+
+	def model_file(self) -> ModelFile:
+
+		model_variables = self.variable_preamble()
+		model_definition = self.model_definition()
+		model_actions = self.general_model_actions()
+
+		return ast.ModelFile(
+			model_preamble=model_variables,
+			model_definition=model_definition,
+			model_actions=model_actions
+		)
+
+
+
+	#
+	# Declaring variables and assigning parameter values in the beginning 
+	#	of the mod file
+	#
+	def variable_preamble(self) -> VariablePreamble:
+		"""
+		The variable preamble is the entirety of mod file that comes before the
+		model definition. Two main things are done in that section:
+			1) Declaring variable and their types
+			2) Assigning values to the parameters
+		The parser doesn't do any type checks - it doesn't ensure variables 
+		being assigned values are actually parameters, nor does it ensure that 
+		any endogenous variables are declared 
+
+
+		variable_preamble : variable_type_declaration (variable_preamble)*
+						  | parameter assignment (variable_preamble)*
+						  | empty
+		"""
+
+		# the change_type command that's listed in the same section of the dynare
+		#	module is not included here - I really don't know how that's used yet
+		dynare_variable_types = [
+			dyn.VAR, dyn.VAREXO, dyn.VAREXO_DET, dyn.PARAMETERS, 
+			dyn.PREDETERMINED, dyn.TREND_VAR, dyn.LOG_TREND_VAR
+		]
+
+		declaration_list = ast.CompoundASTList()
+		parameter_list = ast.CompoundASTList()
+		while self.current_token.type is not dyn.MODEL:
+
+			if self.current_token.type in dynare_variable_types:
+				declared_variables = self.variable_type_declaration()
+				declaration_list.extend(declared_variables)
+
+			elif self.current_token.type == base.ID:
+				assigned_parameter = self.variable_assignment()
+				parameter_list.append(assigned_parameter)
+
+		return ast.VariablePreamble(
+			declared_variables=declaration_list,
+			assigned_parameters=parameter_list
+		)
+
+	def variable_type_declaration(self) -> List[VarDeclaration]:
+		"""
+		variable_type_declaration : VARTYPE ID (COMMA ID)* SEMI
+								  : VARTYPE ID (ID)* SEMI
+
+		declaring a particular type of variables, e.g.
+			var y k c;
+			var y, n, c, i;
+		"""
+		declared_type = self.current_token
+		self.eat(declared_type.type)
+
+		variables_of_type = list()
+		while self.current_token.type in (base.COMMA, base.ID):
+
+			if self.current_token.type == base.COMMA:
+				# commas are optional in variable declaration
+				self.eat(base.COMMA)
+
+			variables_of_type.append(self.variable())
+
+		self.eat(base.SEMI)
+
+		# each of the elements in variables_of_type are simple Var ASTs - we
+		#	want to remember their declared types
+		return [ast.VarDeclaration(v, declared_type) for v in variables_of_type]
+
+	def variable_assignment(self) -> VarAssignment:
+		"""
+		variable_assignment : ID EQUALS expr SEMI
+		"""
+		var_node = self.variable()
+
+		equals_token = self.current_token
+		self.eat(base.EQUALS)
+
+		assigned_value = self.expr()
+		self.eat(base.SEMI)
+
+		return ast.VarAssignment(
+			left=var_node,
+			op=equals_token,
+			right=assigned_value
+		)
+
+
+
+	#
+	# regular and period variables
+	#
+	def variable(self) -> Var:
+		"""
+		Quick function for translating variable token to Var AST
+		"""
+		node = ast.Var(self.current_token)
+		self.eat(base.ID)
+		return node
+
+	def maybe_period_variable(self) -> Union[Var, PeriodVar]:
+		"""
+		maybe_period_variable : ID
+							  | ID period_offset
+		returns ast.PeriodVar if offset given, ast.Var node otherwise
+		"""
+		var = self.variable()
+		if self.peek_type() == base.LPARE:
+			direction, offset = self.period_offset()
+			return ast.PeriodVar(
+				var=var, 
+				direction=direction,
+				offset=offset
+			)
+
+		return var
+
+	def period_offset(self) -> Tuple[Token, Token]:
 		"""
 		period_offset : LPARE (PLUS | MINUS) NUMBER RPARE
 		"""
@@ -118,149 +339,65 @@ class Parser(fnc.Parser):
 		self.eat(base.NUMBER)
 		self.eat(base.RPARE)
 
-		# int() can't read the periods.value b/c it is a string float, so 
-		# 	we first cast to float
-		period_str = direction.value + str(periods.value)
-		return int(float(period_str))
+		return direction, periods
 
-	def maybe_offset_variable(self):
+
+
+	#
+	# Defining the Model
+	#
+	def model_definition(self) -> ModelDefinition:
 		"""
-		maybe_offset_variable : ID
-							  | ID period_offset
-		returns ast.OffsetVar if offset given, ast.Var node otherwise
-		"""
-		var = self.variable()
-		if self.peek_type() == base.LPARE:
-			return ast.OffsetVar(var=var, offset=self.period_offset())
-		return var
-
-	def variable(self):
-		node = ast.Var(self.current_token)
-		self.eat(base.ID)
-		return node
-
-
-	# BEFORE MODEL DECLARATION
-	def variable_declaration(self, vtype):
-		"""
-		variable_declaration : ID (COMMA) variable_declaration
-							 | empty
-		"""
-		# if a vtype keyword has been encountered, there must be at least one var
-		var_nodes = [ast.Var(self.current_token)]
-		self.eat(base.ID)
-
-		# constructing nodes for any vars after the first
-		while self.current_token.type in (base.COMMA, base.ID):
-
-			# commas between variable names are optional
-			if self.current_token.type == base.COMMA:
-				self.eat(base.COMMA)
-				var_nodes.append(self.variable())
-
-			elif self.current_token.type == base.ID:
-				var_nodes.append(self.variable())
-
-		return [ast.VarDeclaration(v, vtype) for v in var_nodes]
-
-	def vtype_declaration(self, vtypes):
-
-		var_decl = list()
-		while self.current_token.type in vtypes:
-			# save the variable type to pass to variable_declaration
-			vtype = self.current_token.type 
-
-			# save the list of variables of type 'vtype'
-			self.eat(self.current_token.type)
-			vds = self.variable_declaration(vtype=vtype)
-			var_decl.extend(vds)
-			self.eat(base.SEMI)
-
-		return var_decl
-
-	def declaration(self):
-		root = ast.Compound()
-		root.children.extend(self.vtype_declaration(vbl.REQUIRED_DECLARATIONS))
-		root.children.extend(self.vtype_declaration(vbl.OPTIONAL_DECLARATIONS))
-		return root
-
-	def variable_assignment(self):
-		"""
-		variable_assignment : ID EQUALS expr SEMI
-		"""
-		left = self.variable()
-		token = self.current_token
-		self.eat(base.EQUALS)
-		right = self.expr()
-		node = ast.VarAssignment(left, token, right)
-		self.eat(base.SEMI)
-		return node
-
-	def assignment(self):
-		"""
-		assignment : (variable_assignment)+
+		model_definition : MODEL SEMI model END SEMI
+						 | MODEL LPARE argument_list RPARE SEMI model END SEMI
 		"""
 
-		root = ast.Compound()
-		while self.current_token.type == base.ID:
-			node = self.variable_assignment()
-			root.children.append(node)
-		return root
-
-
-	# MODEL DECLARATION
-	def model_block(self):
-		"""
-		model_block : MODEL SEMI model END SEMI
-					| MODEL LPARE parameter_list RPARE SEMI model END SEMI
-		"""
-		self.eat(mdl.MODEL)
-		parameters = self.optional_parameter_list()
+		self.eat(dyn.MODEL)
+		model_arguments = self.optional_argument_list()
 		self.eat(base.SEMI)
 
 		model = self.model()
-		self.eat(mdl.END)
+		self.eat(dyn.END)
 		self.eat(base.SEMI)
 
-		return ast.ModelBlock(parameters, model)
+		return ast.ModelDefinition(
+			model=model,
+			arguments=model_arguments
+		)
 
-	def model(self):
+	def model(self) -> Model:
 		"""
-		model : model_statement SEMI (model_statement SEMI)*
+		model : model_statement (model_statement)+
+		"""		
+		model = ast.Model()
+
+		while self.current_token.type != dyn.END:
+			statement = self.model_statement()
+			model.append_statement(statement)
+
+		return model
+
+	def model_statement(self) -> Union[VarAssignment, ModelExpression]:
 		"""
-
-		root = ast.Model()
-		root.children.append(self.model_statement())
-
-		# i would like to have this condition based on the current token, rather
-		#	than one it's expecting, but it throws a syntax error either way for now
-		while self.current_token.type is not mdl.END:
-			self.eat(base.SEMI)
-			state = self.model_statement()
-			# having the while conditino based on an expected token necessitates 
-			#	this 'if', however
-			if state.left:
-				root.children.append(state)
-		return root
-
-	def model_statement(self):
+		model_statement : local_declaration SEMI
+						| tag model_expression SEMI
+						| model_expression SEMI
 		"""
-		model_statement : local_declaration
-						| tag model_expression
-						| model_expression
-		"""
-
 		if self.current_token.type == base.POUND:
-			return self.local_declaration()
-		elif self.current_token.type == base.LBRACKET:
-			tag = self.tag_group()
-			node = self.model_expression()
-			node.tag = tag
-			return node
-		else:
-			return self.model_expression()
+			statement = self.local_declaration()
 
-	def model_expression(self):
+		elif self.current_token.type == base.LBRACKET:
+			tag = self.tag_list()
+			statement = self.model_expression()
+			statement.add_tag(tag)
+
+		else:
+			statement = self.model_expression()
+
+		self.eat(base.SEMI)
+		return statement
+
+	def model_expression(self) -> ModelExpression:
 		"""
 		model_expression : mexpr
 						 | mexpr EQUALS mexpr
@@ -269,437 +406,530 @@ class Parser(fnc.Parser):
 		if self.peek_type() == base.EQUALS:
 			self.eat(base.EQUALS)
 			right = self.mexpr()
+
 		else:
 			# if there's no equals sign, it's assumed this is a homogenous equation
 			zero = Token(base.NUMBER, 0)
 			right = ast.Num(zero)
 
-		return ast.ModelExpression(left, right)
+		return ast.ModelExpression(
+			left=left,
+			right=right
+		)
 
-
-	# AUXILLIARY FUNCTIONALITY IN MODEL STATEMENTS: LOCAL VARIABLES, TAGS
-	def local_declaration(self):
+	def tag_list(self) -> CompoundASTList:
 		"""
-		local_declaration : POUND ID EQUALS mexpr
-		"""
-		self.eat(base.POUND)
-
-		left = ast.Var(self.current_token)
-		self.eat(base.ID)
-		token = self.current_token
-		self.eat(base.EQUALS)
-		right = self.mexpr()
-
-		return ast.VarAssignment(left, token, right)
-
-	def tag_group(self):
-		"""
-		tag_group : LBRACKET tag_list RBRACKET
+		tag_list : LBRACKET single_tag (COMMA single_tag)* RBRACKET
 		"""
 		self.eat(base.LBRACKET)
-		root = ast.TagGroup()
-		root.children.append(self.tag())
+		tags = ast.CompoundASTList()
+		tags.append(self.single_tag())
 
-		# tag_list doesn't have it's own method; its done right here
 		while self.current_token.type == base.COMMA:
 			self.eat(base.COMMA)
-			root.children.append(self.tag())
+			tags.append(self.single_tag())
 		self.eat(base.RBRACKET)
 
-		return root
+		return tags
 
-	def tag(self):
+	def single_tag(self) -> Argument:
 		"""
-		tag : ID EQUALS STRING
-			| ID 		<- only if its one of the steady tags
+		single_tag : ID EQUALS STRING
+				   | ID 	<- only if its one of the steady tags
 		"""
 		key = self.current_token
 		self.eat(base.ID)
-		if key.value in sdy.TAGS:
-			return ast.Tag(key)
+
+		if self.current_token.type == base.EQUALS:
+			self.eat(base.EQUALS)
+			value = self.current_token
+			self.eat(base.STRING)
+			return ast.Argument(
+				token=key,
+				value=value
+			)
+
+		return ast.Argument(token=key)
+
+	def local_declaration(self) -> VarAssignment:
+		"""
+		local_declaration : POUND ID EQUALS mexpr 
+		"""
+		self.eat(base.POUND)
+
+		var_node = ast.Var(self.current_token)
+		self.eat(base.ID)
+
+		token = self.current_token
 		self.eat(base.EQUALS)
-		value = self.current_token
-		self.eat(base.STRING)
-		return ast.Tag(key, value)
+
+		right = self.mexpr()
+
+		return ast.LocalModelDeclaration(
+			left=var_node,
+			op=token,
+			right=right
+		)
 
 
-	# SETTING INITIAL AND TERMINAL VALUES FOR SOLVING & SIMULATING
-	def model_condition_block(self):
-
-		unused_types = sim.CONDITION_TYPES.copy()
-		root = ast.ModelConditionBlock()
-
-		while self.current_token.type in sim.CONDITION_TYPES:
-
-			# ensuring each type of block is called exactly once
-			if self.current_token.type not in unused_types:
-				self.error()
-			unused_types.remove(self.current_token.type)
-
-			if self.current_token.type == sim.INITVAL:
-				self.eat(sim.INITVAL)
-				root.initial = self.model_condition_values()
-			if self.current_token.type == sim.ENDVAL:
-				self.eat(sim.ENDVAL)
-				root.terminal = self.model_condition_values()
-			if self.current_token.type == sim.HISTVAL:
-				self.eat(sim.HISTVAL)
-				root.historical = self.model_condition_values()
-
-		return root
-		
-	def model_condition_values(self):
-		param = self.optional_parameter_list()
-		self.eat(base.SEMI)
-
-		root = ast.ModelConditionValues(parameters=param)
-		while self.current_token.type == base.ID:
-			node = self.variable_assignment()
-			root.children.append(node)
-		self.eat(mdl.END)
-		self.eat(base.SEMI)
-		return root
 
 
-	# PARSING THE BLOCK OF SHOCKS
-	def shock_block(self):
-		self.eat(sim.SHOCKS)
-		self.eat(base.SEMI)
-		node = self.shock_list()
-		self.eat(mdl.END)
-		self.eat(base.SEMI)
+
+	# 
+	# the mathematical expressions in the model. these are identical to the 
+	#	similarly named functions in the BaseParser, with the only difference
+	#	being the 'matom' function can parse PeriodVars and Vars
+	#
+	def matom(self) -> AST:
+		token = self.current_token
+
+		if token.type == base.ID:
+			var = self.maybe_period_variable()
+			return var
+
+		elif token.type == base.NUMBER:
+			self.eat(base.NUMBER)
+			return ast.Num(token)
+
+		elif token.type == base.LPARE:
+			self.eat(base.LPARE)
+			node = self.mexpr()
+			self.eat(base.RPARE)
+			return node
+
+		elif token.type in (base.MINUS, base.PLUS):
+			self.eat(token.type)
+			node = ast.UnaryOp(
+				op=token,
+				expr=self.mterm()
+			)
+			return node
+
+		self.error()
+
+	def mcall(self) -> AST:
+		while self.current_token.type == base.FUNCTION:
+			token = self.current_token
+			self.eat(base.FUNCTION)
+			self.eat(base.LPARE)
+			node = ast.Function(
+				token=token,
+				expr=self.mexpr()
+			)
+			self.eat(base.RPARE)
+
+		try:
+			return node
+		except UnboundLocalError:
+			return self.matom()
+
+	def mexponent(self) -> AST:
+		node = self.mcall()
+
+		while self.current_token.type == base.POWER:
+			token = self.current_token
+			self.eat(base.POWER)
+
+			node = ast.BinaryOp(
+				left=node,
+				op=token,
+				right=self.mexponent()
+			)
+
 		return node
-		
-	def shock_list(self):
 
-		root = ast.ShockBlock()
-		root.children.append(self.shock())
+	def mterm(self) -> AST:
+		node = self.mexponent()
+
+		while self.current_token.type in (base.MUL, base.DIV):
+			token = self.current_token
+			self.eat(token.type)
+
+			node = ast.BinaryOp(
+				left=node,
+				op=token,
+				right=self.mexponent()
+			)
+
+		return node
+
+	def mexpr(self) -> AST:
+		node = self.mterm()
+
+		while self.current_token.type in (base.PLUS, base.MINUS):
+			token = self.current_token
+			self.eat(token.type)
+
+			node = ast.BinaryOp(
+				left=node,
+				op=token,
+				right=self.mterm()
+			)
+
+		return node
+
+
+
+	#
+	# Commands for after model has been defined
+	#
+	def general_model_actions(self) -> ModelActions:
+		"""
+		After the model definition has been parsed in model_definition, the 
+		simulation and stochastic commands follow. These commands include:
+			1) Defining model boundary conditions in initval, endval, and histval 
+				blocks.
+			2) Defining the shocks to the model in the shocks block
+			3) General commands like 'steady;', 'homotopy_setup;', 'steady_state_model;'
+
+		I don't anticipate trying to read matlab's plotting functions, so the end 
+		of the simulation_commands block is also the end of the .mod file
+		"""
+		model_actions = ast.ModelActions()
+
+		boundary_commands = [dyn.INITVAL, dyn.ENDVAL, dyn.HISTVAL]
+
+		while self.current_token.type != base.EOF:
+
+			if self.current_token.type in boundary_commands:
+				bound_type = self.current_token.type
+				bound_values = self.boundary_values()
+
+				model_actions.set_boundary_values(bound_values, bound_type)
+
+			elif self.current_token.type == dyn.SHOCKS:
+				shocks = self.shocks_block()
+				model_actions.set_shocks(shocks)
+
+			else:
+				generic_commands = self.model_actions()
+
+		return model_actions
+
+	def boundary_values(self) -> ArgCompoundASTList:
+		"""
+		boundary_values : INITVAL SEMI (ID EQUALS expr SEMI)+ END SEMI
+						| INITVAL argument_list SEMI (ID EQUALS expr)+ END SEMI
+						| ENDVAL SEMI (ID EQUALS expr)+ END SEMI
+						| ENDVAL argument_list SEMI (ID EQUALS expr)+ END SEMI
+						| HISTVAL SEMI (ID EQUALS expr)+ END SEMI
+						| HISTVAL argument_list SEMI (ID EQUALS expr)+ END SEMI
+		"""
+
+		# the 'if' statement in simulation_commands will have already ensured
+		#	the current token is a valid boundary command
+		self.eat(self.current_token.type)
+
+		arguments = self.optional_argument_list()
 		self.eat(base.SEMI)
-		while self.current_token.type in (sim.CORR, vbl.VAR):
-			root.children.append(self.shock())
+
+		bound_values = ast.ArgCompoundASTList(arguments)
+
+		while self.current_token.type != dyn.END:
+			assigned_boundary = self.variable_assignment()
+			bound_values.append(assigned_boundary)
+
+		self.eat(dyn.END)
+		self.eat(base.SEMI)
+		return bound_values
+
+	def shocks_block(self) -> ShocksBlock:
+		self.eat(dyn.SHOCKS)
+
+		arguments = self.optional_argument_list()
+		self.eat(base.SEMI)
+
+		shocks = ast.ShocksBlock(arguments)
+
+		while self.current_token.type in (dyn.CORR, dyn.VAR):
+			single_shock = self.shock()
 			self.eat(base.SEMI)
-		return root
+			shocks.append(single_shock)
 
-	def shock(self):
+		self.eat(dyn.END)
+		self.eat(base.SEMI)
+		return shocks
 
-		if self.current_token.type == sim.CORR:
+	def shock(self) -> Union[StochasticShock, DeterministicShock]:
+		"""
+		The dynare shock block has a large vocabulary used to specify how
+		shocks to the model are administered, which makes parsing it a rather
+		tedious job
+		"""
+
+		if self.current_token.type == dyn.CORR:
 			return self.correlated_shock()
+
 		elif (
-			self.current_token.type == vbl.VAR
+			self.current_token.type == dyn.VAR
 			and self.peek_type(k=2) == base.COMMA
 		):
-			return self.covarying_shock() 
+			return self.covarying_shock()
+
 		elif (
-			self.current_token.type == vbl.VAR
-			and self.peek_type(k=2) == base.EQUALS
+			self.current_token.type == dyn.VAR 
+			and self.peek_type(k=2) == base.EQUALS 
 		):
 			return self.variance_shock()
+
 		elif (
-			self.current_token.type == vbl.VAR
-			and self.peek_type(k=2) == base.SEMI
-			and self.peek_type(k=3) == sim.STDERR
+			self.current_token.type == dyn.VAR 
+			and self.peek_type(k=2) == base.SEMI 
+			and self.peek_type(k=3) == dyn.STDERR
 		):
 			return self.stderr_shock()
 
 		else:
 			return self.deterministic_shock()
 
-	def correlated_shock(self):
+	def correlated_shock(self) -> StochasticShock:
 		"""
 		correlated_shock : CORR ID COMMA ID EQUALS expr
-		"""	
-		self.eat(sim.CORR)
+		"""
+		self.eat(dyn.CORR)
 		x = self.variable()
+
 		self.eat(base.COMMA)
 		y = self.variable()
+		
 		self.eat(base.EQUALS)
 		expr = self.expr()
 
-		node = ast.CorrelatedShock(
-					left=x,
-					right=y,
-					expr=expr)
-		return node
+		return ast.StochasticShock(
+			shock_type='correlated',
+			correlate_x=x,
+			correlate_y=y,
+			correlation=expr
+		)
 
-	def covarying_shock(self):
+	def covarying_shock(self) -> StochasticShock:
 		"""
 		covarying_shock : VAR ID COMMA ID EQUALS expr
 		"""
-		self.eat(vbl.VAR)
+		self.eat(dyn.VAR)
 		x = self.variable()
+
 		self.eat(base.COMMA)
 		y = self.variable()
+
 		self.eat(base.EQUALS)
 		expr = self.expr()
 
-		node = ast.CovaryingShock(
-					left=x,
-					right=y,
-					expr=expr)
-		return node
+		return ast.StochasticShock(
+			shock_type='covarying',
+			covariate_x=x,
+			covariate_y=y,
+			covariance=expr
+		)
 
-	def variance_shock(self):
+	def variance_shock(self) -> StochasticShock:
 		"""
 		variance_shock : VAR ID EQUALS expr
 		"""
-		self.eat(vbl.VAR)
+		self.eat(dyn.VAR)
 		token = self.variable()
+
 		self.eat(base.EQUALS)
 		expr = self.expr()
 
-		node = ast.VarianceShock(
-					token=token,
-					expr=expr)
-		return node
+		return ast.StochasticShock(
+			shock_type='variance',
+			shock_var=token,
+			variance=expr
+		)
 
-	def stderr_shock(self):
+	def stderr_shock(self) -> StochasticShock:
 		"""
 		stderr_shock : VAR ID SEMI STDERR expr
 		"""
-		self.eat(vbl.VAR)
+		self.eat(dyn.VAR)
 		token = self.variable()
+
 		self.eat(base.SEMI)
-		self.eat(sim.STDERR)
+		self.eat(dyn.STDERR)
+
 		expr = self.expr()
 
-		node = ast.StdErrShock(
-					token=token,
-					expr=expr)
-		return node
+		return ast.StochasticShock(
+			shock_type='stderr',
+			shock_var=token,
+			stderr=expr
+		)
 
-	def deterministic_shock(self):
-		"""
+	def deterministic_shock(self) -> DeterministicShock:
+		"""	
 		deterministic_shock : VAR ID SEMI PERIODS periods_list SEMI VALUES values_list
 		"""
-		self.eat(vbl.VAR)
+		self.eat(dyn.VAR)
 		token = self.variable()
+
 		self.eat(base.SEMI)
-		self.eat(sim.PERIODS)
+		self.eat(dyn.PERIODS)
 		periods = self.shock_periods_list()
+
 		self.eat(base.SEMI)
-		self.eat(sim.VALUES)
+		self.eat(dyn.VALUES)
 		values = self.shock_values_list()
 
-		node = ast.DeterministicShock(
-					token=token,
-					periods=periods,
-					values=values)
-		return node
+		return ast.DeterministicShock(
+			shock_type='deterministic',
+			shock_var=token,
+			shock_periods=periods,
+			shock_values=values
+		)
 
-	def shock_periods_list(self):
+	def shock_periods_list(self) -> CompoundASTList:
 		"""
-		shock_periods_list : shock_period COMMA shock_periods_list
-						   | shock_period shock_periods_list
-						   | shock_period
+		A single shock period can either be a single integer, signifying a one
+		period deterministic shock, or a range of periods from a:b
+
+		shock_periods_list : ((NUM | NUM:NUM) (COMMA))+
 		"""
-		root = ast.Compound()
-		root.children.append(self.shock_period())
+
+		shock_periods = ast.CompoundASTList()
+
 		while self.current_token.type in (base.COMMA, base.NUMBER):
 
 			if self.current_token.type == base.COMMA:
 				self.eat(base.COMMA)
-				root.children.append(self.shock_period())
 
-			elif self.current_token.type == base.NUMBER:
-				root.children.append(self.shock_period())
-
-		return root
-
-	def shock_period(self):
-		"""
-		shock_period : NUMBER COLON NUMBER
-					 | NUMBER
-		"""
-		start = self.current_token
-		self.eat(base.NUMBER)
-		if self.current_token.type == base.COLON:
-			self.eat(base.COLON)
-			end = self.current_token
+			start = self.current_token
 			self.eat(base.NUMBER)
-			return ast.ShockPeriod(start=start, end=end)
-		return ast.ShockPeriod(start=start, end=start)
 
-	def shock_values_list(self):
+			if self.current_token.type == base.COLON:
+				self.eat(base.COLON)
+				end = self.current_token
+				self.eat(base.NUMBER)
+				single_period = ast.DeterministicShockPeriod(
+					start=start,
+					end=end
+				)
+
+			else:
+				single_period = ast.DeterministicShockPeriod(
+					start=start,
+					end=start
+				)
+
+			shock_periods.append(single_period)
+
+		return shock_periods
+
+	def shock_values_list(self) -> CompoundASTList:
 		"""
-		shock_values_list : shock_value COMMA shock_values_list
-						  | shock_value shock_values_list
-						  | shock_value
+		The values of the shocks can be single numbers or general expressions. 
+		If the latter, the whole expression must be in parantheses
+
+		shocK_values_list : ((NUM | LPARE expr RPARE) (COMMA))+
+
 		"""
-		root = ast.Compound()
-		root.children.append(self.shock_value())
+		shock_values = ast.CompoundASTList()
+
 		while self.current_token.type in (base.COMMA, base.NUMBER, base.LPARE):
 
 			if self.current_token.type == base.COMMA:
 				self.eat(base.COMMA)
-				root.children.append(self.shock_value())
 
+			if self.current_token.type == base.NUMBER:
+				token = self.current_token
+				self.eat(base.NUMBER)
+				single_value = ast.Num(token)
+			
 			else:
-				root.children.append(self.shock_value())
+				self.eat(base.LPARE)
+				single_value = self.expr()
+				self.eat(base.RPARE)
 
-		return root
+			shock_values.append(single_value)
 
-	def shock_value(self):
+		return shock_values
+
+
+
+	def model_actions(self):
+
+		if self.current_token.type == base.ID:
+			assigned_var = self.variable_assignment()
+
+		elif self.current_token.type == dyn.STEADY:
+			print('gonna find the steady state of the model')
+
+		raise NotImplementedError(self.current_token)
+
+
+
+
+
+
+	#
+	# parsing argument lists
+	#
+	def optional_argument_list(self) -> CompoundASTList:
 		"""
-		shock_value : NUM
-					| LPARE expr RPARE
+		dynare allows for both keyword arguments and placement arguments, whereas
+		matlab only uses the presence of arguments to signifiy deviations from 
+		the default
+
+		optional_argument_list : LPARE (ID | ID EQUALS (ID | STRING | expr))+ RPARE
+							   | empty
 		"""
-		if self.current_token.type == base.NUMBER:
-			token = self.current_token
-			self.eat(base.NUMBER)
-			return ast.ShockValue(token=token)
+		if self.current_token.type != base.LPARE:
+			return ast.CompoundASTList()
+
+		return self.argument_list()
+
+	def argument_list(self) -> CompoundASTList:
 		self.eat(base.LPARE)
-		expr = self.expr()
-		self.eat(base.RPARE)
-		return ast.ShockValue(token=expr)
+		arg_list = ast.CompoundASTList()
 
-
-	# PARSING THE STEADY-STATE COMMANDS
-	def steady_state_block(self):
-
-		root = ast.SteadyStateBlock()
-
-		if self.current_token.type == sdy.HOMOTOPYSETUP:
-			root.homotopy = self.homotopy_block()
-		if self.current_token.type == sdy.STEADYSTATEMODEL:
-			root.steady_state_model = self.steady_state_model()
-		if self.current_token.type == sdy.STEADY:
-			root.steady = self.steady_command()
-		return root
-
-	def steady_command(self):
-		self.eat(sdy.STEADY)
-		param = self.optional_parameter_list()
-		self.eat(base.SEMI)
-		return ast.SteadyCommand(param)
-
-	def homotopy_block(self):
-		"""
-		homotopy_block : HOMOTOPYSETUP SEMI (homotopy_variable SEMI)+ END SEMI
-		"""
-		self.eat(sdy.HOMOTOPYSETUP)
-		self.eat(base.SEMI)
-		root = ast.HomotopyBlock()
-		root.children.append(self.homotopy_variable())
-		self.eat(base.SEMI)
-
-		while self.current_token.type == base.ID:
-			root.children.append(self.homotopy_variable())
-			self.eat(base.SEMI)
-
-		self.eat(mdl.END)
-		self.eat(base.SEMI)
-
-		return root 
-
-	def homotopy_variable(self):
-		"""
-		homotopy_variable : VAR COMMA EXPR
-						  | VAR COMMA EXPR COMMA EXPR
-		"""
-		token = self.variable()
-		self.eat(base.COMMA)
-		first_expr = self.expr()
+		first_arg = self.single_argument()
+		arg_list.append(first_arg)
 		
-		if self.current_token.type == base.COMMA:
+		while self.current_token.type == base.COMMA:
 			self.eat(base.COMMA)
-			second_expr = self.expr()
-			return ast.HomotopyVar(token=token, start=first_expr, end=second_expr)
+			single_arg = self.single_argument()
+			arg_list.append(single_arg)
 
-		return ast.HomotopyVar(token=token, start=first_expr, end=first_expr)
+		self.eat(base.RPARE)
+		return arg_list
 
-	def steady_state_model(self):
+	def single_argument(self) -> Argument:
 		"""
-
+		single_argument : ID
+						| ID EQUALS STRING
+						| ID EQUALS ID
+						| ID EQUALS expr
 		"""
-
-		# DYNARE STEADY STATE MODEL CAN ALSO PARSE FUNCTIONS, REFER TO DOC
-		self.eat(sdy.STEADYSTATEMODEL)
-		self.eat(base.SEMI)
-		
-		root = ast.SteadyStateModel()
-		while self.current_token.type == base.ID:
-			root.children.append(self.steady_state_model_expr())
-			self.eat(base.SEMI)
-		self.eat(mdl.END)
-		self.eat(base.SEMI)
-
-		return root
-
-	def steady_state_model_expr(self):
-		token = self.variable()
-		self.eat(base.EQUALS)
-		expr = self.expr()
-		return ast.SteadyStateModelExpression(token=token, expr=expr)
-
-
-
-	
-	# PARSING LISTS OF PARAMETERS - NOT EXCLUSIVE TO MODEL BLOCK, BUT IT'S 
-	#	THE FIRST TIME IT CAME UP
-	def parameter(self):
-		"""
-		parameter : ID
-				  | ID EQUALS STRING
-				  | ID EQUALS NUMBER
-		"""
-		token = self.current_token
+		var_token = self.current_token
 		self.eat(base.ID)
+
 		if self.current_token.type == base.EQUALS:
 			self.eat(base.EQUALS)
 
-			if self.current_token.type == base.NUMBER:
-				value = self.current_token
-				self.eat(base.NUMBER)
-				return ast.Param(token=token, value=value)
-			else:
+			if self.current_token.type == base.STRING:
 				value = self.current_token
 				self.eat(base.STRING)
-				return ast.Param(token=token, value=value)
+				return ast.Argument(
+					token=var_token,
+					value=value
+				)
 
-		return ast.Param(token=token)
+			elif self.current_token.type == base.ID:
+				value = self.current_token
+				self.eat(base.ID)
+				return ast.Argument(
+					token=var_token,
+					value=value
+				)
 
+			else:
+				value = self.expr()
+				return ast.Argument(
+					token=var_token,
+					value=value
+				)
 
-	def parameter_list(self):
-		"""
-		parameter_list : LPARE parameter (COMMA parameter)* RPARE
-		"""
-		self.eat(base.LPARE)
-
-		root = ast.Compound()
-		root.children.append(self.parameter())
-
-		while self.current_token.type == base.COMMA:
-			self.eat(base.COMMA)
-			root.children.append(self.parameter())
-		self.eat(base.RPARE)
-
-		return root
-
-	def optional_parameter_list(self):
-		""" auxillary function to check for parameter list """
-		if self.peek_type() == base.LPARE:
-			return self.parameter_list()
-		else:
-			return ast.Compound()
-
-	def modfile(self):
-		decl_node = self.declaration()
-		assn_node = self.assignment()
-
-		model_node = self.model_block()
-		cond_node = self.model_condition_block()
-
-		shock_node = self.shock_block()
-		steady_state_node = self.steady_state_block()
-		steady_state_node.describe()
-
-
-		return ast.ModFile(declaration=decl_node, 
-							assignment=assn_node, 
-							model_block=model_node,
-							simconditions=cond_node
+		return ast.Argument(
+			token=var_token,
+			value=None
 		)
-		
-
-	def parse(self):
-		return self.modfile()

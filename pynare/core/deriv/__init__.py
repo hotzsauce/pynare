@@ -1,0 +1,3 @@
+"""
+computing derivatives of model
+"""

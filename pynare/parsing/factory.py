@@ -14,17 +14,14 @@ from typing import Union
 
 import copy 
 
-from pynare.parsing.base import (
-	ABCVisitor,
-	BaseEvaluator,
-	_BaseEvaluator
-)
-
 from pynare.parsing.lexer import DynareLexer
 from pynare.parsing.parser import DynareParser
 from pynare.parsing.semantics import DynareSemanticAnalyzer
 
+import pynare.parsing.ast as ast
+import pynare.parsing.base as base
 import pynare.parsing.dynare as dyn
+
 
 
 class ModelOutline(object):
@@ -43,6 +40,7 @@ class ModelOutline(object):
 
 		self._local_model_variables = dict()
 		self._model_expression_asts = list()
+		self._model_expression_vars = list()
 
 		self._initial_values = dict()
 		self._terminal_values = dict()
@@ -86,9 +84,11 @@ class ModelOutline(object):
 
 	def add_model_expression_ast(
 		self,
-		mexpr_ast
+		mexpr_ast,
+		mexpr_vars
 	):
 		self._model_expression_asts.append(mexpr_ast)
+		self._model_expression_vars.append(mexpr_vars)
 
 
 	@property
@@ -156,10 +156,13 @@ class ModelFactory(object):
 			model_factory = DynareModelFactory(text)
 			return model_factory.create_outline()
 
+		else:
+			raise NotImplementedError()
 
 
 
-class DynareModelFactory(ABCVisitor):
+
+class DynareModelFactory(base.ABCVisitor):
 
 	# mapping of dynare variable type names to the ModelOutline's internal
 	#	variable names
@@ -239,7 +242,7 @@ class DynareModelFactory(ABCVisitor):
 		before the model definition
 		"""
 
-		value = BaseEvaluator(
+		value = base.BaseEvaluator(
 			tree=node.right,
 			scope=self.file_scope
 		)
@@ -279,13 +282,18 @@ class DynareModelFactory(ABCVisitor):
 
 
 	def visit_Model(self, node):
+		"""
+		Visiting each statement in the model definition. This doesn't check any
+		of the optional arguments that can be invoked after the model command
+		yet. Each statement is either a LocalModelDeclaration or ModelExpression
+		"""
 		for single_statement in node._statements._list:
 			self.visit(single_statement)
 
 
 	def visit_LocalModelDeclaration(self, node):
 		
-		value = BaseEvaluator(
+		value = base.BaseEvaluator(
 			tree=node.right,
 			scope=self.model_scope
 		)
@@ -296,11 +304,27 @@ class DynareModelFactory(ABCVisitor):
 
 
 	def visit_ModelExpression(self, node):
+		"""
+		joining the left and right model expressions into one expression, with
+						mexpr = left hand side - right hand side
 
-		ast_tups = (node.left, node.right)
-		self.outline.add_model_expression_ast(ast_tups)
-		self.visit(node.left)
-		self.visit(node.right)
+		Then the joint mexpr is visited & records the period offsets of each of 
+		the endogenous variables in the model. Also, a list of variables in 
+		each expression is recorded to reduce the number of times a Jacobian
+		object is instantiated when linearizing.
+		"""
+
+		self.current_mexprs_vars = set()
+		mexpr = ast.BinaryOp(
+			left=node.left,
+			op=base.Token(base.MINUS, '-'),
+			right=node.right
+		)
+		self.visit(mexpr)
+		self.outline.add_model_expression_ast(
+			mexpr,
+			self.current_mexprs_vars
+		)
 
 
 	#
@@ -326,6 +350,8 @@ class DynareModelFactory(ABCVisitor):
 			periods = self.outline._endo_lead_lags[var_name]
 			periods.add(0)
 
+			self.current_mexprs_vars.add((var_name, 0))
+
 		except KeyError:
 			pass
 
@@ -335,6 +361,8 @@ class DynareModelFactory(ABCVisitor):
 		try:
 			periods = self.outline._endo_lead_lags[var_name]
 			periods.add(node.period_offset)
+
+			self.current_mexprs_vars.add((var_name, node.period_offset))
 
 		except KeyError:
 			pass
@@ -371,7 +399,7 @@ class DynareModelFactory(ABCVisitor):
 		# self.visit(boundaries.arguments)
 		for assignment in boundaries._list:
 			var_name = assignment.left.value
-			var_value = BaseEvaluator(
+			var_value = base.BaseEvaluator(
 				tree=assignment.right,
 				scope=self.file_scope
 			)
@@ -390,13 +418,13 @@ class DynareModelFactory(ABCVisitor):
 			var_name = single_shock.shock_var.value
 
 			if single_shock.shock_type == 'variance':
-				variance = BaseEvaluator(
+				variance = base.BaseEvaluator(
 					tree=single_shock.variance,
 					scope=self.file_scope
 				)
 
 			elif single_shock.shock_type == 'stderr':
-				stderr = BaseEvaluator(
+				stderr = base.BaseEvaluator(
 					tree=single_shock.stderr,
 					scope=self.file_scope
 				)

@@ -63,6 +63,7 @@ class ABCModel(object):
 		# we save the original ASTs in case a parameter or model expression is 
 		#	updated
 		self._model_exprs_asts = _copy._model_expression_asts
+		self._model_exprs_vars = _copy._model_expression_vars
 
 		self._init_steady_state_exprs()
 
@@ -72,30 +73,14 @@ class ABCModel(object):
 		"""
 		initialize the steady state expressions of the model. 
 		"""
-
-		# each model expression is stored as a tuple of asts of the LHS 
-		#	and RHS of the expression
-		lhs_ast, rhs_ast = zip(*self._model_exprs_asts)
-
-		self._steady_state_lhs = _vectorize_model_functions(
+		self._steady_state_exprs = _vectorize_model_functions(
 			[
 				SteadyStateFunction(
 					tree=ast,
 					scope=self.model_scope,
 					model_vars=self.outline._endogenous
 				)
-				for ast in lhs_ast
-			]
-		)
-
-		self._steady_state_rhs = _vectorize_model_functions(
-			[
-				SteadyStateFunction(
-					tree=ast,
-					scope=self.model_scope,
-					model_vars=self.outline._endogenous
-				)
-				for ast in rhs_ast
+				for ast in self._model_exprs_asts
 			]
 		)
 

@@ -15,19 +15,17 @@ def _define_simple_least_squares(M: Model):
 	Parameters
 	----------
 	M : Model
-		the pynare model with '_steady_state_lhs' and '_steady_state_rhs' 
-		methods
+		the pynare model with a vectorized '_steady_state_exprs' method
 
 	Returns
 	-------
 	least squares function
 	"""
 
-	L = M._steady_state_lhs
-	R = M._steady_state_rhs
+	ss_expr = M._steady_state_exprs
 
 	def _least_squares(x):
-		return np.sum(np.power(L(x) - R(x), 2))
+		return np.sum(np.power(ss_expr(x), 2))
 
 	return _least_squares
 

@@ -40,12 +40,13 @@ class _ModelLinearizer(object):
 
 		# the steady-state of endogenous variables & exogenous variables 
 		#	correspond to the columns of the Jacobian
-		endo = dict(zip(model.endogenous.name, model.steady_state))
-		exo = dict(zip(model.shocks.name, np.zeros(len(model.shocks))))
-		self.steady = {**endo, **exo}
+		self.endo = dict(zip(model.endogenous.name, model.steady_state))
+		self.exo = dict(zip(model.shocks.name, np.zeros(len(model.shocks))))
+		self.steady = {**self.endo, **self.exo}
 
 		self.idx_mgr = model._index_mgr
 		self.model_exprs = model._model_exprs_asts
+		self.mexpr_vars = model._model_exprs_vars
 
 		n_exprs = len(self.model_exprs)
 		self.jac = np.zeros((n_exprs, self.idx_mgr.n_endo_cols + self.idx_mgr.n_exos))
@@ -58,35 +59,36 @@ class _ModelLinearizer(object):
 		self, 
 		expr_idx: int
 	):
+		# get the endogenous variables that are in this model expression. Each
+		#	element of the set 'var' is a tuple of the form of (var_name, offset)
+		#	where offset is either -1, 0, 1
+		model_var = self.mexpr_vars[expr_idx]
 
-		lhs, rhs = self.model_exprs[expr_idx]
-		lhs = base.ASTSubstitution(lhs, self.scope)
-		rhs = base.ASTSubstitution(rhs, self.scope)
+		# substitute all the parameter values into the model expression ast
+		model_ast = self.model_exprs[expr_idx]
+		model_ast = base.ASTSubstitution(model_ast, self.scope)
 
 		for jac_var in self.steady.keys():
 
+			# column of variable in the model jacobian, and the time periods
+			#	it appears in 
 			jac_cols = self.idx_mgr.jacobian_column(jac_var)
 			offset_periods = self.idx_mgr.lead_lag(jac_var)
 
 			for col_idx, offset in zip(jac_cols, offset_periods):
 
-				lhs_jac = _DynamicJacobian(
-					tree=lhs,
-					diff_var=jac_var,
-					offset=offset
-				)
+				# we only want to compute the Jacobian for variables that appear
+				#	in this model expression
+				if (jac_var, offset) in model_var or jac_var in self.exo:
 
-				rhs_jac = _DynamicJacobian(
-					tree=rhs,
-					diff_var=jac_var,
-					offset=offset
-				)
+					model_jac = _DynamicJacobian(
+						tree=model_ast,
+						diff_var=jac_var,
+						offset=offset
+					)
 
-				l = JacobianEvaluator(lhs_jac.differentiate(), self.steady)
-				r = JacobianEvaluator(rhs_jac.differentiate(), self.steady)
-
-				self.jac[expr_idx, col_idx] = l - r
-
+					j = JacobianEvaluator(model_jac.differentiate(), self.steady)
+					self.jac[expr_idx, col_idx] = j
 
 
 

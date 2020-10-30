@@ -7,6 +7,8 @@ from __future__ import annotations
 import numpy as np
 import scipy.optimize as optim
 
+from pynare.core.expressions import vectorize_functions
+
 def _define_simple_least_squares(M: Model):
 	"""
 	Create a simple least squares function based on the steady state equations
@@ -15,14 +17,15 @@ def _define_simple_least_squares(M: Model):
 	Parameters
 	----------
 	M : Model
-		the pynare model with a vectorized '_steady_state_exprs' method
+		the pynare model with a list of steady state functions in the 
+		`_steady_state_funcs` attribute
 
 	Returns
 	-------
 	least squares function
 	"""
 
-	ss_expr = M._steady_state_exprs
+	ss_expr = vectorize_functions(M.steady_state_model)
 
 	def _least_squares(x):
 		return np.sum(np.power(ss_expr(x), 2))
@@ -78,7 +81,7 @@ def minimize_conjugate_gradient(
 	were declared
 	"""
 	obj_func = _define_simple_least_squares(M)
-	x0 = tuple(M._endogenous.initial)
+	x0 = tuple([v.initial for v in M._endogenous])
 
 	return optim.minimize(
 		fun=obj_func,
@@ -109,7 +112,7 @@ def minimize_nelder_mead(
 	were declared
 	"""
 	obj_func = _define_simple_least_squares(M)
-	x0 = tuple(M._endogenous.initial)
+	x0 = tuple([v.initial for v in M._endogenous])
 
 	return optim.minimize(
 		fun=obj_func,

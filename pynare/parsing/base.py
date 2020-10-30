@@ -6,8 +6,10 @@ pynare Parser
 from typing import Union
 from copy import deepcopy
 
-import numpy as np
-from scipy.special import erf 
+# use autograd's thinly wrapped numpy & scipy to handle ArrayBoxes when 
+#	evaluating derivatives
+import autograd.numpy as np
+from autograd.scipy.special import erf 
 
 import pynare.parsing.ast as ast
 

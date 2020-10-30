@@ -1,169 +1,24 @@
+from __future__ import annotations
 
-from collections import (
-	MutableMapping,
-	Sequence
-)
+from collections import Sequence
 
 import numpy as np 
 
 
+
+
 class ABCModelVariable(object):
 
-	def __init__(
-		self,
-		name: str,
-		vtype: str
-	):
+	def __init__(self, name: str, vtype: str):
 		self.name = name
 		self.vtype = vtype
 
 
-class EndogenousModelVariable(ABCModelVariable):
-
-	def __init__(
-		self,
-		name
-	):
-		super().__init__(name, 'endogenous')
-		self.lead_lag = None
-		self.initial = self.terminal = self.historical = self.steady = None
-
-	def __repr__(self):
-		bounds = dict()
-		for b in ('initial', 'terminal', 'historical'):
-			v = getattr(self, b)
-			if v is not None:
-				bounds[b] = v
-
-		return f'<EndoVar({self.name}, {bounds}, periods:{self.lead_lag})>'
-
-	def __str__(self):
-		return f'<EndoVar({self.name}, ss={self.steady})>'
-
-	@property
-	def is_static(self):
-		# appears only at time t
-		return self.lead_lag == {0}
-
-	@property
-	def is_pforward(self):
-		# purely forward variables must appear at t+1 and cannot appear at t-1
-		return (1 in self.lead_lag) & (-1 not in self.lead_lag)
-
-	@property
-	def is_pbackward(self):
-		# purely backward variables must appear at t-1 and cannot appear at t+1
-		return (-1 in self.lead_lag) & (1 not in self.lead_lag)
-
-	@property
-	def is_mixed(self):
-		# appears at times t-1, t, and t+1
-		return {-1, 1}.issubset(self.lead_lag)
-
-	@property
-	def is_state(self):
-		# state variables are purely backward variables and mixed variables
-		return self.is_pbackward | self.is_mixed
-
-	def set_lead_lag(self, ll):
-		self.lead_lag = ll
-
-	def set_initial_value(self, value):
-		self.initial = value
-
-	def set_terminal_value(self, value):
-		self.terminal = value
-
-	def set_historical_value(self, value):
-		self.historical = value
-
-	def set_steady_state(self, value):
-		self.steady = value
-
-
-class StochasticModelVariable(ABCModelVariable):
-
-	def __init__(
-		self,
-		name
-	):
-		super().__init__(name, 'stochastic')
-		self.variance = None
-
-	def __repr__(self):
-		return f'<StochVar({self.name}, var={self.variance})>'
-
-	def set_variance(self, value):
-		self.variance = value
-
-
-class DeterministicModelVariable(ABCModelVariable):
-
-	def __init__(
-		self,
-		name
-	):
-		super().__init__(name, 'deterministic')
-
-
-
-
-
-"""
-The VariableList and _CallableVarList are pretty closely intertwined - when an 
-attribute of VariableList is called that's a method name of the component
-ABCModelVariables, we add all those methods to a _CallableVarList instance, then
-assuming the number of 'args' is the same length as 'methods', evaluate each
-method with the single argument
-
-The 'if isinstance(args, dict)' branch in '__call__' ensures that the arguments
-are sent to the right method, as self.method and self.variables are always 
-guaranteed to be in the same order
-"""
-class _CallableVarList(object):
-
-	def __init__(self, methods, variables):
-		self.methods = methods
-		self.variables = variables
-
-	def __call__(self, args):
-		if len(args) > 0:
-			if isinstance(args, dict):
-				var_names = [v.name for v in self.variables]
-				return [
-					method(args[v]) for method, v in zip(self.methods, var_names)
-				]
-
-			return [method(a) for method, a in zip(self.methods, args)]
-
-
 class VariableList(Sequence):
 
-	def __init__(
-		self,
-		variables: list,
-		vtype: str
-	):
-		if vtype == 'endogenous':
-			vclass = EndogenousModelVariable
-		elif vtype == 'stochastic':
-			vclass = StochasticModelVariable
-		elif vtype == 'deterministic':
-			vclass = DeterministicModelVariable
-
-		self._variables = [vclass(n) for n in variables]
-		self._vtype = vtype
-
-	def __getattribute__(self, attr):
-		return super(VariableList, self).__getattribute__(attr)
-
-	def __getattr__(self, attr):
-		is_callable = callable(getattr(self._variables[0], attr))
-		if is_callable:
-			variable_methods = [getattr(v, attr) for v in self._variables]
-			return _CallableVarList(variable_methods, self._variables)
-
-		return [getattr(v, attr) for v in self._variables]
+	def __init__(self, vtype: str, variables: Iterable[ABCModelVariable]):
+		self.vtype = vtype
+		self._variables = variables
 
 	def __getitem__(self, key):
 		return self._variables[key]
@@ -171,59 +26,82 @@ class VariableList(Sequence):
 	def __len__(self):
 		return len(self._variables)
 
-	def __str__(self):
-		return f'<VariableList{self._variables}>'
 
 
+# ---------- Endogenous Variables ----------
 
+endo_bounds = ('initial', 'terminal', 'historical')
+class EndogenousVariable(ABCModelVariable):
 
+	initial = None
+	terminal = None
+	historical = None
+	steady = None
 
+	def __init__(self, name: str, lead_lag=None, *args, **kwargs):
+		super().__init__(name, 'endogenous')
+		self.lead_lag = lead_lag
 
-class ModelParameter(ABCModelVariable):
-
-	def __init__(
-		self,
-		name,
-		value
-	):
-		super().__init__(name, 'parameter')
-		self.value = value
-
-	def __repr__(self):
-		return f'<ModelParameter({self.name}: {self.value})>'
-
-
-class ParameterDict(MutableMapping):
-
-	def __init__(
-		self,
-		params: dict
-	):
-		self._params = {n: ModelParameter(n, v) for n, v in params.items()}
-
-	def __getitem__(self, key):
-		return self._params[key].value
-
-	def __setitem__(self, key, value):
-		mp = ModelParameter(key, value)
-		self._params[key] = mp
-
-	def __delitem__(self, key):
-		del self._params[key]
-
-	def __iter__(self):
-		for p in self._params.keys():
-			yield p
-		return
-
-	def __len__(self):
-		return len(self._params)
+		for k, v in kwargs.items():
+			if k in endo_bounds:
+				setattr(self, k, v)
 
 	def __repr__(self):
-		return f'<ParameterDict{list(self._params.values())}>'
+		bounds = {
+			b: getattr(self, b) for b in endo_bounds
+			if getattr(self, b) is not None
+		}
+		return f'<EndoVar({self.name}, {bounds}, periods:{self.lead_lag})>'
+
+
+class EndogenousVariableList(VariableList):
+
+	@classmethod
+	def from_outline(self, outline: ModelOutline):
+		bounds = {
+			'initial': '_initial_values',
+			'terminal': '_terminal_values',
+			'historical': '_historical_values'
+		}
+		bound_dicts = {
+			k: getattr(outline, v) for k, v in bounds.items() 
+			if getattr(outline, v)
+		}
+
+		# although we don't know which of the bounds will be given, the lead lags
+		# 	dict will always be nonempty
+		lead_lags = outline._endo_lead_lags
+		var_dict = {}
+		for var_name in lead_lags.keys():
+			var_dict[var_name] = {b: d[var_name] for b, d in bound_dicts.items()}
+
+		v = [EndogenousVariable(n, ll, **var_dict[n]) for n, ll in lead_lags.items()]
+
+		return EndogenousVariableList('endogenous', v)
 
 
 
+
+# ---------- Stochastic Variables ----------
+
+class StochasticVariable(ABCModelVariable):
+
+	def __init__(self, name: str, variance=None):
+		super().__init__(name, 'stochastic')
+		self.variance = variance
+
+
+class StochasticVariableList(VariableList):
+
+	@classmethod
+	def from_outline(cls, outline: ModelOutline):
+		v = [StochasticVariable(n, var) for n, var in outline._shocks.items()]
+		return StochasticVariableList('stochastic', v)
+
+
+
+
+# ---------- Managing Variable Indices ----------
 
 class VariableIndexManager(object):
 	"""
@@ -274,6 +152,13 @@ class VariableIndexManager(object):
 		self.stoch_shocks = stoch_shocks
 		self.n_exos = len(stoch_shocks)
 
+	@classmethod
+	def from_outline(cls, outline: ModelOutline):
+		# kind of unnecesary, but keeps it consistent with *VariableList classes
+		return VariableIndexManager(
+			outline._endo_lead_lags,
+			outline._stochastic_exogenous
+		)
 
 	def jacobian_column(
 		self, 
@@ -397,23 +282,3 @@ class VariableIndexManager(object):
 		llx = self.llx
 		_bj = llx[0, np.isnan(llx[1, :]) & np.isnan(llx[2, :])]
 		return _bj[~np.isnan(_bj)].astype(int)
-	
-	
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

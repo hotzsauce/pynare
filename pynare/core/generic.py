@@ -1,17 +1,10 @@
 from __future__ import annotations
 
-from typing import Union, Any
-
-import numpy as np 
-
-from pynare.core.expressions import (
-	_vectorize_model_functions,
-	SteadyStateFunction
-)
+from pynare.core.expressions import steady_func, dynamic_func
 
 from pynare.core.variables import (
-	ParameterDict,
-	VariableList,
+	EndogenousVariableList,
+	StochasticVariableList,
 	VariableIndexManager
 )
 
@@ -26,84 +19,85 @@ class ABCModel(object):
 	):
 		self.outline = outline
 		self.language = language
+		self.is_altered = False
 
 		# using a copy of the outline to set the various attributes allows the 
 		#	original model outline to be preserved
 		_copy = outline.__deepcopy__()
 
-		self._parameters = ParameterDict(_copy._parameters)
-		self._endogenous = VariableList(_copy._endogenous, 'endogenous')
-		
-		self._endogenous.set_initial_value(_copy._initial_values)
-		self._endogenous.set_terminal_value(_copy._terminal_values)
-		self._endogenous.set_historical_value(_copy._historical_values)
-		self._endogenous.set_lead_lag(_copy._endo_lead_lags)
+		# parameters & locally declared variables are stored in dicts of the 
+		#	form 'var_name': 'var_value'
+		self._parameters = _copy._parameters
+		self._local_model_variables = _copy._local_model_variables
 
-		self._index_mgr = VariableIndexManager(
-			_copy._endo_lead_lags,
-			_copy._stochastic_exogenous
-		)
+		# endogenous and exogenous variables are stored as tuples of variable
+		#	names in the order they were declared
+		self._endogenous = EndogenousVariableList.from_outline(_copy)
+		self._stoch_shocks = StochasticVariableList.from_outline(_copy)
+		# self._determ_shocks = _copy._deterministic_exogenous
 
+		# manages indices of variables in declaration & decision-rule order
+		self._index_mgr = VariableIndexManager.from_outline(_copy)
 
-		# at the moment the ModelFactory doesn't handle deterministic shocks, and
-		#	it will only handle 'var' and 'stderr' stochastic shocks, which is
-		#	stored in the '_shocks' dict as the variance regardless of how its
-		#	declared
-		self._stochastic_shocks = \
-			VariableList(_copy._stochastic_exogenous, 'stochastic')
-		# self._deterministic_shocks = \
-		# 	VariableList(_copy._deterministic_exogenous, 'deterministic')
-
-		self._stochastic_shocks.set_variance(_copy._shocks)
-
-
-
-		self._local_model_variables = ParameterDict(_copy._local_model_variables)
-
-		# we save the original ASTs in case a parameter or model expression is 
-		#	updated
 		self._model_exprs_asts = _copy._model_expression_asts
-		self._model_exprs_vars = _copy._model_expression_vars
-
-		self._init_steady_state_exprs()
 
 
-		
-	def _init_steady_state_exprs(self):
+	def _init_steady_state_funcs(self):
 		"""
-		initialize the steady state expressions of the model. 
+		Define the steady state functions based on the ASTs in the model's 
+		definition
 		"""
-		self._steady_state_exprs = _vectorize_model_functions(
-			[
-				SteadyStateFunction(
-					tree=ast,
-					scope=self.model_scope,
-					model_vars=self.outline._endogenous
-				)
-				for ast in self._model_exprs_asts
-			]
-		)
+		self._steady_state_funcs = list()
 
-	@property
-	def state_variables(self):
-		return [v for v in self._endogenous if v.is_state]
-	
-	@property
-	def model_scope(self):
-		return {**self._parameters, **self._local_model_variables}
-	
+		endo = self.endogenous
+		scope = self.model_scope
+
+		for n_expr, ast in enumerate(self._model_exprs_asts):
+			# define and rename function to 'steady_mexpr{n_expr}'
+			ss_func = steady_func(ast, endo, scope)
+			ss_func.__name__ = f'{ss_func.__name__}{n_expr}'
+			
+			self._steady_state_funcs.append(ss_func)
+
+	def _init_dynamic_funcs(self):
+		"""
+		Define the dynamic functions based on the ASTs in the model's definition
+		"""
+		self._dynamic_funcs = list()
+
+		endo = self.endogenous
+		exo = self.exogenous
+		llx = self._index_mgr.llx
+		scope = self.model_scope
+
+		for n_expr, ast in enumerate(self._model_exprs_asts):
+			# define and rename function to 'dynamic_mexpr{n_expr}'
+			dyn_func = dynamic_func(ast, endo, exo, llx, scope)
+			dyn_func.__name__ = f'{dyn_func.__name__}{n_expr}'
+
+			self._dynamic_funcs.append(dyn_func)
+
+
 	@property
 	def parameters(self):
 		return self._parameters
 
 	@property
-	def parameter_values(self):
-		return self._parameters
+	def model_scope(self):
+		return {**self._parameters, **self._local_model_variables}
 
 	@property
 	def endogenous(self):
-		return self._endogenous
+		"""
+		when accessing public-facing endogenous attribute, just return tuple 
+		of the variable names
+		"""
+		return tuple((v.name for v in self._endogenous))
 
 	@property
-	def shocks(self):
-		return self._stochastic_shocks # + self._deterministic_shocks
+	def exogenous(self):
+		"""
+		when accessing public-facing exogenous attribute, just return tuple 
+		of the variable names
+		""" 
+		return tuple((v.name for v in self._stoch_shocks))

@@ -78,10 +78,14 @@ class Model(ABCModel):
 			method=method
 		)
 
-		self._steady_state_results = ss_algo(self, **kwargs)
-		self._steady_state_values = self._steady_state_results.x
+		try:
+			self._steady_state_results = ss_algo(self, **kwargs)
+		except AttributeError:
+			self.update_model()
+			self._steady_state_results = ss_algo(self, **kwargs)
 
-		self.endogenous.set_steady_state(self._steady_state_values)
+
+		self._steady_state_values = self._steady_state_results.x
 		return self._steady_state_values
 
 
@@ -100,8 +104,8 @@ class Model(ABCModel):
 		value : float
 			the new value of the parameter
 		"""
+		self.is_altered = True
 		self._parameters[param_name] = value
-		self.update_model()
 
 
 	def update_model(self):
@@ -110,18 +114,34 @@ class Model(ABCModel):
 		a model expression, or some other alteration - this resets the steady state
 		of the model
 		"""
-		self._init_steady_state_exprs()
-		self.compute_steady_state()
+		self.is_altered = False
+		self._init_steady_state_funcs()
+		self._init_dynamic_funcs()
+
+	@property
+	def steady_state_model(self):
+		if self.is_altered:
+			self.update_model()
+		return self._steady_state_funcs
+
+	@property
+	def dynamic_model(self):
+		if self.is_altered:
+			self.update_model()
+		return self._dynamic_funcs
 
 	@property
 	def jacobian(self):
 		# returns the dynamic Jacobian of the model
 		if hasattr(self, '_jacobian'):
-			return self._jacobian
+			if self.is_altered:
+				self.update_model()
+			self._jacobian = compute_jacobian(self)
 
 		else:
 			self._jacobian = compute_jacobian(self)
-			return self._jacobian
+
+		return self._jacobian
 
 	@property
 	def steady_state(self):
@@ -129,7 +149,10 @@ class Model(ABCModel):
 		Access the steady-state values of the model. If necessary, compute them
 		"""
 		if hasattr(self, '_steady_state_values'):
-			pass
+			if self.is_altered:
+				self.update_model()
+				self.compute_steady_state()
 		else:
 			_ = self.compute_steady_state()
+
 		return self._steady_state_values

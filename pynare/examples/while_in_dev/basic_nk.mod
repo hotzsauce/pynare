@@ -3,7 +3,7 @@ var n rr a y c w mu r pie;
 
 varexo ea;
 
-parameters phi chi eta phi_p phi_pie phi_y theta beta rho_a vol_a
+parameters chi eta phi_p phi_pie phi_y theta beta rho_a vol_a
 	yss ass zss muss css wss fixed_cost nss
 	piess rss rrss;
 

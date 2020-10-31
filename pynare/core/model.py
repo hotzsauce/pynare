@@ -1,14 +1,11 @@
 
 from __future__ import annotations
 
-from typing import Union
-
-
 from pynare.core.generic import ABCModel
 from pynare.core.steady import _SteadyStateManager
 from pynare.core.deriv.linearizing import compute_jacobian
 
-from pynare.parsing.api import read_model
+from pynare.parsing import read_model
 
 from pynare.utils.io import (
 	read_file,
@@ -34,7 +31,19 @@ class Model(ABCModel):
 		language: str = 'dynare'
 	) -> Model:
 		"""
+		Create a model from a pathname. If file is not found, assume it's a
+		pre-made example model in pynare/examples
 
+		Parameters
+		----------
+		filepath : str | Path
+			path to .mod or .txt file that defines the model
+		language : str
+			the language the model is written in
+
+		Returns
+		-------
+		Model
 		"""
 		try:
 			model_definition = read_file(filepath)

@@ -10,8 +10,6 @@ object, and perform semantics checks while doing so
 
 from __future__ import annotations
 
-from typing import Union
-
 import copy 
 
 from pynare.parsing.lexer import DynareLexer
@@ -40,7 +38,6 @@ class ModelOutline(object):
 
 		self._local_model_variables = dict()
 		self._model_expression_asts = list()
-		self._model_expression_vars = list()
 
 		self._initial_values = dict()
 		self._terminal_values = dict()
@@ -84,11 +81,9 @@ class ModelOutline(object):
 
 	def add_model_expression_ast(
 		self,
-		mexpr_ast,
-		mexpr_vars
+		mexpr_ast
 	):
 		self._model_expression_asts.append(mexpr_ast)
-		self._model_expression_vars.append(mexpr_vars)
 
 
 	@property
@@ -140,11 +135,8 @@ class ScopedMemory(object):
 
 
 
-"""
+# ---------- Factory Classes ----------
 
-Factory Classes
-
-"""
 class ModelFactory(object):
 
 	def __new__(
@@ -309,22 +301,15 @@ class DynareModelFactory(base.ABCVisitor):
 						mexpr = left hand side - right hand side
 
 		Then the joint mexpr is visited & records the period offsets of each of 
-		the endogenous variables in the model. Also, a list of variables in 
-		each expression is recorded to reduce the number of times a Jacobian
-		object is instantiated when linearizing.
+		the endogenous variables in the model
 		"""
-
-		self.current_mexprs_vars = set()
 		mexpr = ast.BinaryOp(
 			left=node.left,
 			op=base.Token(base.MINUS, '-'),
 			right=node.right
 		)
 		self.visit(mexpr)
-		self.outline.add_model_expression_ast(
-			mexpr,
-			self.current_mexprs_vars
-		)
+		self.outline.add_model_expression_ast(mexpr)
 
 
 	#
@@ -350,8 +335,6 @@ class DynareModelFactory(base.ABCVisitor):
 			periods = self.outline._endo_lead_lags[var_name]
 			periods.add(0)
 
-			self.current_mexprs_vars.add((var_name, 0))
-
 		except KeyError:
 			pass
 
@@ -361,8 +344,6 @@ class DynareModelFactory(base.ABCVisitor):
 		try:
 			periods = self.outline._endo_lead_lags[var_name]
 			periods.add(node.period_offset)
-
-			self.current_mexprs_vars.add((var_name, node.period_offset))
 
 		except KeyError:
 			pass

@@ -289,7 +289,7 @@ def model_signature(
 
 def ensure_parameter(
 	names: Iterable[str], 
-	kind: str = 'POSITIONAL_ONLY'
+	kind: str = 'POSITIONAL_OR_KEYWORD'
 ) -> Tuple[inspect.Parameter]:
 	"""
 	Translates an iterable of strings into a tuple of inspect.Parameter objects

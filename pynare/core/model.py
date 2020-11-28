@@ -129,13 +129,13 @@ class Model(ABCModel):
 
 	@property
 	def steady_state_model(self):
-		if self.is_altered:
+		if not hasattr(self, '_steady_state_funcs') or self.is_altered:
 			self.update_model()
 		return self._steady_state_funcs
 
 	@property
 	def dynamic_model(self):
-		if self.is_altered:
+		if not hasattr(self, '_dynamic_funcs') or self.is_altered:
 			self.update_model()
 		return self._dynamic_funcs
 
